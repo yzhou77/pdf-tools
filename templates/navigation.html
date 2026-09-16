@@ -1,0 +1,41 @@
+<nav class="navbar navbar-expand-lg fixed-top">
+    <a class="navbar-brand" href="{{ url_for('home') }}">
+        <span class="brand-mark">PT</span> PDF&nbsp;Toolkit
+    </a>
+    <button class="navbar-dark navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav mr-auto align-items-lg-center">
+            {% for group in TOOL_GROUPS %}
+            <li class="nav-item nav-menu" data-nav-menu>
+                <a class="nav-link" href="#" role="button" aria-haspopup="true" aria-expanded="false">
+                    {{ group.name }} <i class="caret"></i>
+                </a>
+                <div class="nav-panel">
+                    <div class="np-head">{{ group.name }}</div>
+                    {% for endpoint, name, icon, desc in group.tools %}
+                    <a class="np-item" href="{{ url_for(endpoint) }}">
+                        <span class="np-ico"><i class="fa {{ icon }}"></i></span>
+                        <span class="np-txt">
+                            <span class="np-name">{{ name }}</span>
+                            <span class="np-desc">{{ desc }}</span>
+                        </span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        <ul class="navbar-nav align-items-lg-center">
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_for('home') }}">All tools</a>
+            </li>
+            <li class="nav-item">
+                <button id="themeToggle" class="btn my-2 my-lg-0 ml-lg-2" onclick="toggleMode()">Light Mode</button>
+            </li>
+        </ul>
+    </div>
+</nav>

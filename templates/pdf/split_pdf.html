@@ -1,0 +1,293 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content">
+    <h2 class="pb-2 text-danger">Split PDF</h2>
+    <form id="splitForm" action="{{ url_for('split_pdf') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <input type="file" id="splitFile" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+            <small class="text-muted d-block mt-1">
+                PDF, JPG, PNG, Word, Excel and PowerPoint files are accepted (non-PDFs are converted first).
+            </small>
+            <p id="pageInfo" class="mt-2 mb-0 text-muted"><em>Upload a file to see its page count.</em></p>
+        </div>
+        <div class="form-group">
+            <label class="mb-1">Segments to extract</label>
+            <div id="segments"></div>
+            <button type="button" id="addSegmentBtn" class="btn-action mt-2">
+                <i class="fa fa-plus"></i> Add segment
+            </button>
+        </div>
+        <div id="thumbGridWrap" class="form-group d-none">
+            <div class="d-flex align-items-center mb-2" style="gap:8px;">
+                <span>Or click thumbnails, then "Add selection as segment(s)"</span>
+                <button type="button" id="selAsSegBtn" class="btn-action ml-auto">
+                    <i class="fa fa-plus"></i> Add selection as segment(s)
+                </button>
+                <button type="button" id="clearSelBtn" class="btn-action">
+                    <i class="fa fa-times"></i> Clear selection
+                </button>
+            </div>
+            <div id="thumbGrid" class="thumb-grid"></div>
+        </div>
+        <div id="splitError" class="alert alert-danger mt-3 d-none"></div>
+        <button type="submit" id="splitBtn" class="btn btn-danger">Split</button>
+        <button type="reset" id="resetBtn" class="btn btn-secondary">Cancel</button>
+    </form>
+    <div id="splitResult" class="mt-4 d-none">
+        <h5 class="text-success">Split complete</h5>
+        <a id="downloadAllBtn" href="#" class="btn btn-success btn-sm mb-2" download>
+            <i class="fa fa-download"></i> Download All (.zip)
+        </a>
+        <ul id="segmentResults" class="list-unstyled"></ul>
+    </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='pdf_helpers.js') }}"></script>
+<script>
+(function () {
+    PDFHelpers.setupPdfJs();
+    var fileInput      = document.getElementById('splitFile');
+    var pageInfo       = document.getElementById('pageInfo');
+    var segmentsEl     = document.getElementById('segments');
+    var addBtn         = document.getElementById('addSegmentBtn');
+    var form           = document.getElementById('splitForm');
+    var errBox         = document.getElementById('splitError');
+    var splitBtn       = document.getElementById('splitBtn');
+    var resetBtn       = document.getElementById('resetBtn');
+    var resultBox      = document.getElementById('splitResult');
+    var resultList     = document.getElementById('segmentResults');
+    var downloadAllBtn = document.getElementById('downloadAllBtn');
+    var gridWrap       = document.getElementById('thumbGridWrap');
+    var gridEl         = document.getElementById('thumbGrid');
+    var selAsSegBtn    = document.getElementById('selAsSegBtn');
+    var clearSelBtn    = document.getElementById('clearSelBtn');
+    var currentPdf  = null;
+    var totalPages  = 0;
+    var cells       = {};
+    var selectedSet = new Set();
+    function addSegment(start, end) {
+        var row = document.createElement('div');
+        row.className = 'segment-row d-flex align-items-center mb-2 flex-wrap';
+        row.style.gap = '6px';
+        var startThumb = document.createElement('span');
+        startThumb.className = 'seg-thumb';
+        startThumb.innerHTML = '<span style="font-size:10px;color:#888;">—</span>';
+        var s = document.createElement('input');
+        s.type = 'number';
+        s.className = 'form-control form-control-sm seg-start';
+        s.placeholder = 'Start';
+        s.min = 1;
+        if (totalPages) s.max = totalPages;
+        if (start) s.value = start;
+        s.style.maxWidth = '90px';
+        var dash = document.createElement('span');
+        dash.textContent = '–';
+        var e = document.createElement('input');
+        e.type = 'number';
+        e.className = 'form-control form-control-sm seg-end';
+        e.placeholder = 'End';
+        e.min = 1;
+        if (totalPages) e.max = totalPages;
+        if (end) e.value = end;
+        e.style.maxWidth = '90px';
+        var endThumb = document.createElement('span');
+        endThumb.className = 'seg-thumb';
+        endThumb.innerHTML = '<span style="font-size:10px;color:#888;">—</span>';
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn-action';
+        del.innerHTML = '<i class="fa fa-trash"></i>';
+        del.title = 'Delete this segment';
+        del.onclick = function () { row.remove(); };
+        function updateThumb(wrap, input) {
+            var val = parseInt(input.value, 10);
+            if (!currentPdf || isNaN(val) || val < 1 || val > totalPages) {
+                wrap.innerHTML = '<span style="font-size:10px;color:#888;">—</span>';
+                return;
+            }
+            wrap.innerHTML = '';
+            var c = document.createElement('canvas');
+            wrap.appendChild(c);
+            PDFHelpers.renderPageToCanvas(currentPdf, val, c, 0.18).catch(function () {});
+        }
+        s.addEventListener('input', function () { updateThumb(startThumb, s); });
+        e.addEventListener('input', function () { updateThumb(endThumb, e); });
+        row.appendChild(startThumb);
+        row.appendChild(s);
+        row.appendChild(dash);
+        row.appendChild(e);
+        row.appendChild(endThumb);
+        row.appendChild(del);
+        segmentsEl.appendChild(row);
+        if (start) updateThumb(startThumb, s);
+        if (end)   updateThumb(endThumb, e);
+        return row;
+    }
+    function clampSegmentsToTotal() {
+        if (!totalPages) return;
+        document.querySelectorAll('.seg-start, .seg-end').forEach(function (inp) {
+            inp.max = totalPages;
+            if (inp.value && parseInt(inp.value, 10) > totalPages) {
+                inp.value = totalPages;
+                inp.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+    function isPdf(f) {
+    return f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+}
+    fileInput.addEventListener('change', function () {
+        errBox.classList.add('d-none');
+        resultBox.classList.add('d-none');
+        gridWrap.classList.add('d-none');
+        gridEl.innerHTML = '';
+        selectedSet = new Set();
+        var f = fileInput.files[0];
+        if (!f) {
+            pageInfo.innerHTML = '<em>Upload a file to see its page count.</em>';
+            totalPages = 0; currentPdf = null;
+            return;
+        }
+        if (!isPdf(f)) {
+            pageInfo.innerHTML = '<strong>' + f.name + '</strong> will be converted to PDF ' +
+                'on the server. Thumbnail preview is only available for PDFs – please enter segment page numbers manually.';
+            totalPages = 0; currentPdf = null;
+            return;
+        }
+        PDFHelpers.loadPdfFromFile(f).then(function (pdf) {
+            currentPdf = pdf;
+            totalPages = pdf.numPages;
+            pageInfo.innerHTML = '<strong>' + f.name + '</strong> has <strong>' +
+                                 totalPages + '</strong> page(s).';
+            cells = PDFHelpers.buildThumbGrid(pdf, gridEl, function (pageNum, on) {
+                if (on) selectedSet.add(pageNum); else selectedSet.delete(pageNum);
+            });
+            gridWrap.classList.remove('d-none');
+            clampSegmentsToTotal();
+        }).catch(function () {
+            pageInfo.textContent = 'Could not read PDF; please try another file.';
+            totalPages = 0; currentPdf = null;
+        });
+    });
+    addBtn.addEventListener('click', function () { addSegment(); });
+    selAsSegBtn.addEventListener('click', function () {
+        var runs = PDFHelpers.contiguousRuns(Array.from(selectedSet));
+        if (runs.length === 0) {
+            errBox.textContent = 'Click page thumbnails first to make a selection.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        runs.forEach(function (r) { addSegment(r[0], r[1]); });
+        selectedSet = new Set();
+        PDFHelpers.setGridSelection(cells, selectedSet);
+        errBox.classList.add('d-none');
+    });
+    clearSelBtn.addEventListener('click', function () {
+        selectedSet = new Set();
+        PDFHelpers.setGridSelection(cells, selectedSet);
+    });
+    resetBtn.addEventListener('click', function () {
+        setTimeout(function () {
+            segmentsEl.innerHTML = '';
+            addSegment();
+            pageInfo.innerHTML = '<em>Upload a PDF to see its page count.</em>';
+            totalPages = 0; currentPdf = null;
+            gridWrap.classList.add('d-none');
+            gridEl.innerHTML = '';
+            selectedSet = new Set();
+            errBox.classList.add('d-none');
+            resultBox.classList.add('d-none');
+        }, 0);
+    });
+    form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        errBox.classList.add('d-none');
+        resultBox.classList.add('d-none');
+        var f = fileInput.files[0];
+        if (!f) {
+            errBox.textContent = 'Please upload a PDF file.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var rows = document.querySelectorAll('.segment-row');
+        var segments = [];
+        for (var i = 0; i < rows.length; i++) {
+            var sEl = rows[i].querySelector('.seg-start');
+            var eEl = rows[i].querySelector('.seg-end');
+            var s = sEl.value.trim();
+            var e = eEl.value.trim();
+            if (s === '' && e === '') continue;
+            if (s === '' || e === '') {
+                errBox.textContent = 'Segment ' + (i + 1) + ': please fill in both start and end pages.';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            var si = parseInt(s, 10), ei = parseInt(e, 10);
+            if (isNaN(si) || isNaN(ei) || si < 1 || ei < 1) {
+                errBox.textContent = 'Segment ' + (i + 1) + ': pages must be positive numbers.';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            if (si > ei) {
+                errBox.textContent = 'Segment ' + (i + 1) + ': start page (' + si + ') cannot be greater than end page (' + ei + ').';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            if (totalPages && (si > totalPages || ei > totalPages)) {
+                errBox.textContent = 'Segment ' + (i + 1) + ': page out of range. PDF has ' + totalPages + ' pages.';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            segments.push({ start: si, end: ei });
+        }
+        if (segments.length === 0) {
+            errBox.textContent = 'Please add at least one segment (start & end page), or select pages from the thumbnails.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var fd = new FormData();
+        fd.append('file', f, f.name);
+        fd.append('segments', JSON.stringify(segments));
+        splitBtn.disabled = true;
+        splitBtn.textContent = 'Splitting...';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    resultList.innerHTML = '';
+                    res.body.segments.forEach(function (s) {
+                        var li = document.createElement('li');
+                        li.className = 'd-flex align-items-center py-1 border-bottom';
+                        li.style.gap = '8px';
+                        var label = document.createElement('span');
+                        label.className = 'flex-grow-1';
+                        label.textContent = 'Pages ' + s.start + '–' + s.end + '  (' + s.name + ')';
+                        li.appendChild(label);
+                        var a = document.createElement('a');
+                        a.href = s.url;
+                        a.className = 'btn btn-sm btn-success';
+                        a.setAttribute('download', s.name);
+                        a.innerHTML = '<i class="fa fa-download"></i> Download';
+                        li.appendChild(a);
+                        resultList.appendChild(li);
+                    });
+                    downloadAllBtn.href = res.body.all_url;
+                    resultBox.classList.remove('d-none');
+                } else {
+                    errBox.textContent = (res.body && res.body.error) || 'Split failed.';
+                    errBox.classList.remove('d-none');
+                }
+            })
+            .catch(function (e) {
+                errBox.textContent = 'Network error: ' + e;
+                errBox.classList.remove('d-none');
+            })
+            .finally(function () {
+                splitBtn.disabled = false;
+                splitBtn.textContent = 'Split';
+            });
+    });
+    addSegment();
+})();
+</script>
+{% endblock %}

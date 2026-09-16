@@ -1,0 +1,458 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content main-content--wide">
+    <h2 class="pb-2 text-danger">PDF Summarize</h2>
+
+    <div id="backendNote" class="sum-backend-note d-none"></div>
+
+    <form id="sumForm" action="{{ url_for('summarize_pdf_view') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-3">
+            <label for="sumFile">Select a file</label>
+            <input type="file" id="sumFile" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+            <small class="text-muted d-block mt-1">
+                PDF, JPG, PNG, Word, Excel and PowerPoint files are accepted
+                (non-PDFs are converted to PDF first on the server).
+            </small>
+            <p id="fileInfo" class="mt-2 mb-0 text-muted">
+                <em>Upload a file to preview its pages and choose options.</em>
+            </p>
+        </div>
+
+        <div id="sumSettings" class="form-group d-none">
+            <div class="ocr-options">
+                <div class="ocr-col">
+                    <label for="sumType" class="mb-1">Summary type</label>
+                    <select id="sumType" class="form-control form-control-sm">
+                        <option value="short">Short Summary</option>
+                        <option value="detailed">Detailed Summary</option>
+                        <option value="key_points">Key Points</option>
+                        <option value="executive">Executive Summary</option>
+                        <option value="study_notes">Study Notes</option>
+                    </select>
+                    <small id="sumTypeNote" class="text-muted d-block mt-1"></small>
+                </div>
+
+                <div class="ocr-col">
+                    <label for="sumOutLang" class="mb-1">Output language</label>
+                    <select id="sumOutLang" class="form-control form-control-sm">
+                        <option value="same">Same as Original Document</option>
+                        <option value="en">English</option>
+                        <option value="zh-Hans">Chinese (Simplified)</option>
+                        <option value="zh-Hant">Chinese (Traditional)</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                    </select>
+                    <small id="outLangNote" class="text-muted d-block mt-1"></small>
+                </div>
+
+                <div class="ocr-col">
+                    <label class="mb-1">Pages to summarize</label>
+                    <div>
+                        <label class="ocr-inline"><input type="radio" name="sumScope" value="all" checked> All pages</label>
+                        <label class="ocr-inline"><input type="radio" name="sumScope" value="current"> Current page</label>
+                        <label class="ocr-inline"><input type="radio" name="sumScope" value="selected"> Selected</label>
+                        <label class="ocr-inline"><input type="radio" name="sumScope" value="range"> Range</label>
+                    </div>
+                    <input type="text" id="sumPagesInput" class="form-control form-control-sm mt-1"
+                           placeholder='e.g. "2,5,8" for Selected  or  "1-3,5,7-9" for Range' disabled>
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-danger" id="startSumBtn" disabled>Summarize PDF</button>
+            <button type="button" class="btn-action" id="stopSumBtn" disabled>Stop</button>
+
+            <div id="sumProgressWrap" class="d-none">
+                <div class="ocr-progress-wrap">
+                    <div id="sumProgressBar" class="ocr-progress-bar"></div>
+                    <div id="sumProgressLabel" class="ocr-progress-label">0%</div>
+                </div>
+                <div id="sumProgressMsg" class="text-muted small"></div>
+            </div>
+        </div>
+
+        <div id="sumViewerWrap" class="d-none mt-3">
+            <div class="ocr-view-tabs">
+                <button type="button" class="btn-action active" id="viewPreviewBtn">
+                    <i class="fa fa-file-pdf-o"></i> Original preview
+                </button>
+                <button type="button" class="btn-action" id="viewTextBtn">
+                    <i class="fa fa-align-left"></i> Summarized text
+                </button>
+                <button type="button" class="btn-action" id="viewSideBtn">
+                    <i class="fa fa-columns"></i> Side-by-side
+                </button>
+            </div>
+
+            <div id="sumViewer" class="ocr-viewer view-preview">
+                <div class="ocr-pdf-panel">
+                    <div class="ocr-panel-head">
+                        <span class="ocr-page-nav">
+                            <button type="button" class="btn-action" id="prevPageBtn" title="Previous page">
+                                <i class="fa fa-chevron-left"></i>
+                            </button>
+                            <input type="number" id="pageJump" class="form-control form-control-sm" min="1" value="1">
+                            / <span id="totalPages">?</span>
+                            <button type="button" class="btn-action" id="nextPageBtn" title="Next page">
+                                <i class="fa fa-chevron-right"></i>
+                            </button>
+                        </span>
+                        <span class="ml-2"></span>
+                        <button type="button" class="btn-action" id="zoomOutBtn" title="Zoom out"><i class="fa fa-search-minus"></i></button>
+                        <span id="zoomLabel" class="zoom-indicator">100%</span>
+                        <button type="button" class="btn-action" id="zoomInBtn" title="Zoom in"><i class="fa fa-search-plus"></i></button>
+                        <button type="button" class="btn-action" id="fitBtn" title="Fit to width">Fit</button>
+                    </div>
+                    <div id="sumPdfScroll" class="ocr-pdf-scroll">
+                        <canvas id="sumCanvas"></canvas>
+                    </div>
+                </div>
+
+                <div class="ocr-text-panel">
+                    <div class="ocr-panel-head">
+                        <span class="small text-muted">Summary</span>
+                        <span class="ml-auto small text-muted" id="sumMeta"></span>
+                    </div>
+                    <textarea id="sumTextArea" class="sum-summary-area" readonly
+                              placeholder="Click “Summarize PDF” to generate a summary."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <div id="sumWarn"  class="alert alert-warning mt-3 d-none"></div>
+        <div id="sumError" class="alert alert-danger  mt-3 d-none"></div>
+        <div id="sumSuccess" class="alert alert-success mt-3 d-none">
+            <div id="sumSummaryLine"></div>
+            <a id="dlTxtBtn" href="#" class="btn btn-success btn-sm mt-2" download>
+                <i class="fa fa-download"></i> Download Summary
+            </a>
+        </div>
+
+        <button type="button" id="cancelBtn" class="btn btn-secondary mt-2">Cancel</button>
+    </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='pdf_helpers.js') }}"></script>
+<script>
+(function () {
+    PDFHelpers.setupPdfJs();
+
+    var pdfBlob = null, pdfDoc = null;
+    var totalPages = 0, currentPage = 1, displayScale = 1.0, renderTask = null;
+    var jobId = null, pollTimer = null;
+    var caps = { backend: 'extractive', can_translate: false, ocr_available: false };
+
+    var form = document.getElementById('sumForm');
+    var fileInput = document.getElementById('sumFile');
+    var fileInfo = document.getElementById('fileInfo');
+    var backendNote = document.getElementById('backendNote');
+    var settings = document.getElementById('sumSettings');
+    var typeSel = document.getElementById('sumType');
+    var typeNote = document.getElementById('sumTypeNote');
+    var outLangSel = document.getElementById('sumOutLang');
+    var outLangNote = document.getElementById('outLangNote');
+    var pagesInput = document.getElementById('sumPagesInput');
+    var scopeRadios = document.querySelectorAll('input[name="sumScope"]');
+    var startBtn = document.getElementById('startSumBtn');
+    var stopBtn = document.getElementById('stopSumBtn');
+    var progWrap = document.getElementById('sumProgressWrap');
+    var progBar = document.getElementById('sumProgressBar');
+    var progLabel = document.getElementById('sumProgressLabel');
+    var progMsg = document.getElementById('sumProgressMsg');
+    var viewerWrap = document.getElementById('sumViewerWrap');
+    var viewer = document.getElementById('sumViewer');
+    var vPrev = document.getElementById('viewPreviewBtn');
+    var vText = document.getElementById('viewTextBtn');
+    var vSide = document.getElementById('viewSideBtn');
+    var canvas = document.getElementById('sumCanvas');
+    var pdfScroll = document.getElementById('sumPdfScroll');
+    var prevPageBtn = document.getElementById('prevPageBtn');
+    var nextPageBtn = document.getElementById('nextPageBtn');
+    var pageJump = document.getElementById('pageJump');
+    var totalLabel = document.getElementById('totalPages');
+    var zoomInBtn = document.getElementById('zoomInBtn');
+    var zoomOutBtn = document.getElementById('zoomOutBtn');
+    var zoomLabel = document.getElementById('zoomLabel');
+    var fitBtn = document.getElementById('fitBtn');
+    var textArea = document.getElementById('sumTextArea');
+    var sumMeta = document.getElementById('sumMeta');
+    var warnBox = document.getElementById('sumWarn');
+    var errBox = document.getElementById('sumError');
+    var okBox = document.getElementById('sumSuccess');
+    var okLine = document.getElementById('sumSummaryLine');
+    var dlTxtBtn = document.getElementById('dlTxtBtn');
+    var cancelBtn = document.getElementById('cancelBtn');
+
+    var TYPE_HINTS = {
+        short: 'A concise summary with only the most important information.',
+        detailed: 'A comprehensive summary covering the major details.',
+        key_points: 'A bullet-point list of the most important information.',
+        executive: 'Business-oriented: findings, impact, risks and recommendations.',
+        study_notes: 'Key terms, numbered main points and a short overview.'
+    };
+
+    function hideMessages() {
+        errBox.classList.add('d-none'); okBox.classList.add('d-none'); warnBox.classList.add('d-none');
+    }
+    function showError(m) { errBox.textContent = m; errBox.classList.remove('d-none'); }
+    function humanSize(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+        return (b / 1024 / 1024).toFixed(1) + ' MB';
+    }
+    function setView(n) {
+        viewer.classList.remove('view-preview', 'view-text', 'view-side');
+        viewer.classList.add('view-' + n);
+        vPrev.classList.toggle('active', n === 'preview');
+        vText.classList.toggle('active', n === 'text');
+        vSide.classList.toggle('active', n === 'side');
+    }
+    vPrev.addEventListener('click', function () { setView('preview'); });
+    vText.addEventListener('click', function () { setView('text'); });
+    vSide.addEventListener('click', function () { setView('side'); });
+
+    function refreshOutLangNote() {
+        if (outLangSel.value === 'same') {
+            outLangNote.textContent = 'The summary keeps the document\u2019s own language.';
+            outLangNote.className = 'text-muted d-block mt-1';
+        } else if (caps.can_translate) {
+            outLangNote.textContent = 'Will be written in the selected language.';
+            outLangNote.className = 'text-muted d-block mt-1';
+        } else {
+            outLangNote.innerHTML = '<strong>Note:</strong> this server has no LLM configured, so it ' +
+                'cannot translate. The summary will come back in the document\u2019s original language.';
+            outLangNote.className = 'text-warning d-block mt-1';
+        }
+    }
+    typeSel.addEventListener('change', function () { typeNote.textContent = TYPE_HINTS[typeSel.value] || ''; });
+    outLangSel.addEventListener('change', refreshOutLangNote);
+
+    function loadCaps() {
+        var fd = new FormData(); fd.append('action', 'capabilities');
+        return fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (!res.success) throw new Error(res.error || 'Could not read server capabilities.');
+                caps = res;
+                var parts = [];
+                if (res.backend === 'llm') {
+                    parts.push('<strong>Summarizer:</strong> LLM (' + (res.provider || '?') + ' / ' +
+                               (res.model || '?') + ') \u2014 abstractive summaries and translation are available.');
+                } else {
+                    parts.push('<strong>Summarizer:</strong> offline extractive (no LLM configured). ' +
+                               'It selects the most important sentences from the document itself. ' +
+                               'It does <strong>not</strong> rewrite or translate text.');
+                }
+                parts.push('<strong>Auto-OCR for scanned pages:</strong> ' +
+                           (res.ocr_available ? 'available' : 'unavailable (install Tesseract + poppler)'));
+                backendNote.innerHTML = parts.join('<br>');
+                backendNote.classList.remove('d-none');
+                refreshOutLangNote();
+            })
+            .catch(function (e) {
+                backendNote.textContent = e.message || String(e);
+                backendNote.classList.remove('d-none');
+            });
+    }
+
+    scopeRadios.forEach(function (r) {
+        r.addEventListener('change', function () {
+            var v = document.querySelector('input[name="sumScope"]:checked').value;
+            pagesInput.disabled = (v !== 'selected' && v !== 'range');
+            pagesInput.placeholder = (v === 'selected') ? 'e.g. 2,5,8'
+                : (v === 'range' ? 'e.g. 1-3,5,7-9'
+                : 'e.g. "2,5,8" for Selected  or  "1-3,5,7-9" for Range');
+            startBtn.disabled = !canStart();
+        });
+    });
+    pagesInput.addEventListener('input', function () { startBtn.disabled = !canStart(); });
+
+    function canStart() {
+        if (!pdfDoc) return false;
+        var v = document.querySelector('input[name="sumScope"]:checked').value;
+        if ((v === 'selected' || v === 'range') && !pagesInput.value.trim()) return false;
+        return true;
+    }
+
+    function renderPage(n) {
+        if (!pdfDoc) return;
+        if (renderTask) { try { renderTask.cancel(); } catch (e) {} }
+        currentPage = Math.max(1, Math.min(totalPages, n));
+        pageJump.value = String(currentPage);
+        totalLabel.textContent = String(totalPages);
+        zoomLabel.textContent = Math.round(displayScale * 100) + '%';
+        pdfDoc.getPage(currentPage).then(function (page) {
+            var vp = page.getViewport({ scale: displayScale });
+            canvas.width = Math.floor(vp.width);
+            canvas.height = Math.floor(vp.height);
+            renderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+            return renderTask.promise;
+        }).catch(function () {});
+    }
+    prevPageBtn.addEventListener('click', function () { if (currentPage > 1) renderPage(currentPage - 1); });
+    nextPageBtn.addEventListener('click', function () { if (currentPage < totalPages) renderPage(currentPage + 1); });
+    pageJump.addEventListener('change', function () { renderPage(parseInt(pageJump.value, 10) || 1); });
+    zoomInBtn.addEventListener('click', function () { displayScale = Math.min(4, displayScale * 1.25); renderPage(currentPage); });
+    zoomOutBtn.addEventListener('click', function () { displayScale = Math.max(0.25, displayScale / 1.25); renderPage(currentPage); });
+    fitBtn.addEventListener('click', function () {
+        if (!pdfDoc) return;
+        pdfDoc.getPage(currentPage).then(function (page) {
+            var v = page.getViewport({ scale: 1 });
+            displayScale = Math.max(0.25, Math.min(4, (pdfScroll.clientWidth - 20) / v.width));
+            renderPage(currentPage);
+        });
+    });
+
+    function prepareFile(f) {
+        return PDFHelpers.prepareViaServer(form.action, f);
+    }
+
+    function resetAll() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        pdfBlob = null;
+        if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} pdfDoc = null; }
+        totalPages = 0; currentPage = 1; displayScale = 1.0; jobId = null;
+        canvas.width = 0; canvas.height = 0;
+        textArea.value = ''; sumMeta.textContent = '';
+        progWrap.classList.add('d-none');
+        progBar.style.width = '0%'; progLabel.textContent = '0%'; progMsg.textContent = '';
+        settings.classList.add('d-none');
+        viewerWrap.classList.add('d-none');
+        startBtn.disabled = true; stopBtn.disabled = true;
+        fileInfo.innerHTML = '<em>Upload a file to preview its pages and choose options.</em>';
+        document.querySelector('input[name="sumScope"][value="all"]').checked = true;
+        pagesInput.value = ''; pagesInput.disabled = true;
+        typeSel.value = 'short'; typeNote.textContent = TYPE_HINTS.short;
+        outLangSel.value = 'same'; refreshOutLangNote();
+        setView('preview');
+    }
+
+    fileInput.addEventListener('change', function () {
+        hideMessages(); resetAll();
+        var f = fileInput.files[0];
+        if (!f) return;
+        fileInfo.innerHTML = 'Loading <strong>' + f.name + '</strong> (' + humanSize(f.size) + ')…';
+        prepareFile(f).then(function (res) {
+            pdfBlob = res.blob; pdfDoc = res.doc;
+            totalPages = pdfDoc.numPages; currentPage = 1;
+            pageJump.max = totalPages;
+            fileInfo.innerHTML = '<strong>' + f.name + '</strong> loaded — ' +
+                totalPages + ' page' + (totalPages === 1 ? '' : 's') + '.' +
+                (totalPages > 100 ? ' Large document: it will be summarized in chunks.' : '');
+            settings.classList.remove('d-none');
+            viewerWrap.classList.remove('d-none');
+            typeNote.textContent = TYPE_HINTS[typeSel.value] || '';
+            renderPage(1);
+            setTimeout(function () { fitBtn.click(); }, 30);
+            startBtn.disabled = !canStart();
+        }).catch(function (e) { resetAll(); showError(e.message || String(e)); });
+    });
+
+    startBtn.addEventListener('click', function () {
+        hideMessages();
+        if (!pdfBlob) { showError('Please upload a file first.'); return; }
+        var scope = document.querySelector('input[name="sumScope"]:checked').value;
+        var pagesValue = pagesInput.value.trim();
+        if ((scope === 'selected' || scope === 'range') && !pagesValue) {
+            showError('Please enter the page numbers to summarize.'); return;
+        }
+        var fd = new FormData();
+        fd.append('action', 'start');
+        fd.append('file', pdfBlob, 'main.pdf');
+        fd.append('summary_type', typeSel.value);
+        fd.append('output_language', outLangSel.value);
+        fd.append('scope', scope);
+        fd.append('pages', pagesValue);
+        fd.append('current_page', String(currentPage));
+
+        startBtn.disabled = true; stopBtn.disabled = false;
+        progWrap.classList.remove('d-none');
+        progBar.style.width = '2%'; progLabel.textContent = '…'; progMsg.textContent = 'Starting…';
+
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (!res.ok || !res.body.success) {
+                    throw new Error((res.body && res.body.error) || 'Could not start summarisation.');
+                }
+                jobId = res.body.job; setView('side'); poll();
+            })
+            .catch(function (e) {
+                showError(e.message || String(e));
+                stopBtn.disabled = true; startBtn.disabled = !canStart();
+                progWrap.classList.add('d-none');
+            });
+    });
+
+    function poll() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(function () {
+            if (!jobId) { clearInterval(pollTimer); return; }
+            var fd = new FormData();
+            fd.append('action', 'status'); fd.append('job', jobId);
+            fetch(form.action, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (!j.success) throw new Error(j.error || 'Status lookup failed.');
+                    progBar.style.width = j.progress + '%';
+                    progLabel.textContent = j.progress + '%';
+                    progMsg.textContent = j.message || '';
+                    if (j.status === 'done') {
+                        clearInterval(pollTimer); pollTimer = null; stopBtn.disabled = true;
+                        textArea.value = j.summary || '';
+                        var bits = [];
+                        if (j.source_language) bits.push('source: ' + j.source_language);
+                        if (j.backend) bits.push(j.backend);
+                        if (j.chunks > 1) bits.push(j.chunks + ' chunks');
+                        if (j.ocr_pages && j.ocr_pages.length) bits.push('OCR on p' + j.ocr_pages.join(','));
+                        sumMeta.textContent = bits.join(' · ');
+                        dlTxtBtn.href = j.txt_url || '#';
+                        dlTxtBtn.setAttribute('download', j.txt_name || 'summary.txt');
+                        okLine.innerHTML = 'Summary ready' +
+                            (j.pages_used ? ' for ' + j.pages_used.length + ' page(s)' : '') + '.';
+                        okBox.classList.remove('d-none');
+                        if (j.warning) { warnBox.textContent = j.warning; warnBox.classList.remove('d-none'); }
+                        startBtn.disabled = !canStart();
+                    } else if (j.status === 'error') {
+                        clearInterval(pollTimer); pollTimer = null; stopBtn.disabled = true;
+                        showError(j.error || 'Summarisation failed.');
+                        startBtn.disabled = !canStart();
+                    } else if (j.status === 'cancelled') {
+                        // A deliberate stop is not an error – show a neutral notice.
+                        clearInterval(pollTimer); pollTimer = null;
+                        stopBtn.disabled = true;
+                        progMsg.textContent = j.message || 'Cancelled.';
+                        startBtn.disabled = !canStart();   // compare: refreshStart();
+                    }
+                })
+                .catch(function (e) {
+                    clearInterval(pollTimer); pollTimer = null; stopBtn.disabled = true;
+                    showError(e.message || String(e)); startBtn.disabled = !canStart();
+                });
+        }, 900);
+    }
+
+    stopBtn.addEventListener('click', function () {
+        if (!jobId) return;
+        var fd = new FormData();
+        fd.append('action', 'cancel'); fd.append('job', jobId);
+        fetch(form.action, { method: 'POST', body: fd }).catch(function () {});
+    });
+
+    cancelBtn.addEventListener('click', function () {
+        if (jobId) {
+            var fd = new FormData();
+            fd.append('action', 'cancel'); fd.append('job', jobId);
+            fetch(form.action, { method: 'POST', body: fd }).catch(function () {});
+        }
+        form.reset(); resetAll(); hideMessages();
+    });
+
+    typeNote.textContent = TYPE_HINTS.short;
+    loadCaps();
+})();
+</script>
+{% endblock %}

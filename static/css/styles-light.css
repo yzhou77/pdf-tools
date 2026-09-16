@@ -1,0 +1,80 @@
+/* =========================================================================
+   Light theme.
+
+   Because the dark theme is driven by CSS custom properties, switching theme
+   is now mostly a matter of re-pointing the tokens — the ~40 per-component
+   overrides this file used to carry are no longer needed.
+   ========================================================================= */
+:root {
+    --bg:            #f5f6f9;
+    --bg-raised:     #ffffff;
+    --bg-raised-2:   #fbfbfd;
+    --bg-inset:      #eef0f5;
+    --border:        #dfe3ea;
+    --border-strong: #c3c9d4;
+
+    --text:          #1b2130;
+    --text-muted:    #5a6478;
+    --text-faint:    #8a93a5;
+
+    --accent:        #d1443a;
+    --accent-hover:  #e0574c;
+    --accent-soft:   rgba(209, 68, 58, 0.10);
+    --accent-ring:   rgba(209, 68, 58, 0.28);
+
+    --ok:            #2f8a55;
+    --warn:          #b07d14;
+
+    --shadow-sm: 0 1px 2px rgba(16,24,40,.06);
+    --shadow:    0 6px 20px rgba(16,24,40,.10);
+    --shadow-lg: 0 18px 48px rgba(16,24,40,.16);
+}
+
+body {
+    background:
+        radial-gradient(900px 420px at 12% -8%, rgba(209,68,58,.09), transparent 60%),
+        radial-gradient(760px 420px at 92% -4%, rgba(90,111,181,.11), transparent 60%),
+        var(--bg);
+    color: var(--text);
+}
+
+.navbar.fixed-top { background: rgba(255,255,255,.86); }
+.nav-link:hover, .np-item:hover { background: rgba(16,24,40,.05); color: var(--text); }
+.navbar-brand:hover, .nav-link:hover, .tool-card:hover .card-title a { color: var(--text) !important; }
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath stroke='rgba(27,33,48,0.85)' stroke-width='2' stroke-linecap='round' d='M4 7h22M4 15h22M4 23h22'/%3E%3C/svg%3E");
+}
+#themeToggle:hover { background: rgba(16,24,40,.06); color: var(--text); }
+
+.card, .tool-card { box-shadow: var(--shadow-sm); }
+.tool-card:hover { box-shadow: var(--shadow); }
+
+/* Surfaces that must stay readable against a light page */
+.alert-danger  { color: #8c2019; }
+.alert-success { color: #1d6b41; }
+.alert-warning { color: #7a5609; }
+.alert-info    { color: #2a3f86; }
+
+.btn-secondary:hover { background: rgba(16,24,40,.06); color: var(--text); }
+.btn-action:hover, .btn-action:focus { background: rgba(16,24,40,.06); color: var(--text); }
+.btn-action.active, .btn-danger:hover { color: #fff; }
+
+/* Panels that are deliberately dark in the dark theme (document canvases)
+   stay light-neutral here so page previews keep their contrast. */
+.ocr-pdf-scroll,
+.edit-canvas-wrap,
+.fb-canvas-wrap,
+.sp-canvas-wrap,
+.rd-canvas-wrap,
+.crop-scroll { background: #e4e7ee; }
+
+.thumb-cell .page-label,
+.edit-thumb .t-label,
+.fb-thumb .t-label,
+.sp-thumb .t-label,
+.rd-thumb .t-label { color: #333; }
+
+.ocr-text-area, .sum-summary-area, .cmp-diff-list { background: #fff; color: var(--text); }
+.sig-modal-dialog, .sp-modal-dialog { background: #fff; color: var(--text); }
+
+.crumb { background: rgba(16,24,40,.03); }

@@ -1,0 +1,88 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content">
+    <h2 class="pb-2 text-danger">Encrypt PDF</h2>
+    <form id="encryptForm" action="{{ url_for('encrypt_pdf') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <input type="file" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Enter password</label><br>
+            <input type="password" name="password" id="password">
+            <i class="fa fa-eye" id="togglePassword" onclick="changePasswordVisibility()"></i>
+        </div>
+        <div id="encError" class="alert alert-danger mt-3 d-none"></div>
+        <div id="encSuccess" class="alert alert-success mt-3 d-none">
+            Your encrypted PDF is ready.
+            <a id="encDownloadBtn" href="#" class="btn btn-success btn-sm ml-2" download>
+                <i class="fa fa-download"></i> Download
+            </a>
+        </div>
+        <button type="submit" id="encBtn" class="btn btn-danger">Encrypt</button>
+        <button type="reset" class="btn btn-secondary">Cancel</button>
+    </form>
+</div>
+<script>
+(function () {
+    var form   = document.getElementById('encryptForm');
+    var errBox = document.getElementById('encError');
+    var okBox  = document.getElementById('encSuccess');
+    var dlBtn  = document.getElementById('encDownloadBtn');
+    var btn    = document.getElementById('encBtn');
+    // --- Reset stale state -------------------------------------------------
+    // Without this, a previous run's green "Download" panel stayed on screen
+    // after the user picked a different file, so they could download the wrong
+    // (older) result. Also wire Cancel, which was a bare type="reset" and left
+    // the banners behind.
+    function clearBanners() {
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+    }
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="file"]'), function (inp) {
+        inp.addEventListener('change', clearBanners);
+    });
+    Array.prototype.forEach.call(form.querySelectorAll('button[type="reset"]'), function (b) {
+        b.addEventListener('click', function () {
+            setTimeout(function () {
+                clearBanners();
+                rotateBtn.disabled = false;
+                rotateBtn.textContent = 'Rotate';
+            }, 0);
+        });
+    });
+    form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+        if (!document.getElementById('password').value) {
+            errBox.textContent = 'Please enter a password.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var fd = new FormData(form);
+        btn.disabled = true;
+        btn.textContent = 'Encrypting...';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    dlBtn.href = res.body.url;
+                    dlBtn.setAttribute('download', res.body.name || 'encrypted.pdf');
+                    okBox.classList.remove('d-none');
+                } else {
+                    errBox.textContent = (res.body && res.body.error) || 'Encrypt failed.';
+                    errBox.classList.remove('d-none');
+                }
+            })
+            .catch(function (e) {
+                errBox.textContent = 'Network error: ' + e;
+                errBox.classList.remove('d-none');
+            })
+            .finally(function () {
+                btn.disabled = false;
+                btn.textContent = 'Encrypt';
+            });
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,141 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content">
+    <h2 class="pb-2 text-danger">Rotate PDF</h2>
+    <form id="rotateForm" action="{{ url_for('rotate_pdf') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <input type="file" name="file" id="file" accept="{{ UPLOAD_ACCEPT }}" required>
+        </div>
+        <div class="form-group">
+            <label>Select degree of rotation (clockwise)</label>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="degreeOfRotation" id="rot90"  value="90" checked>
+                <label class="form-check-label" for="rot90">90°</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="degreeOfRotation" id="rot180" value="180">
+                <label class="form-check-label" for="rot180">180°</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="degreeOfRotation" id="rot270" value="270">
+                <label class="form-check-label" for="rot270">270°</label>
+            </div>
+            <div class="form-check d-flex align-items-center" style="gap:8px;">
+                <input class="form-check-input" type="radio" name="degreeOfRotation" id="rotCustom" value="custom">
+                <label class="form-check-label mr-2" for="rotCustom">Custom</label>
+                <input type="number" name="customDegree" id="customDegree"
+                       class="form-control form-control-sm" placeholder="e.g. -90 or 450"
+                       style="max-width:130px;" disabled>
+                <small class="text-muted">(Must be a multiple of 90)</small>
+            </div>
+        </div>
+        <div id="rotateError" class="alert alert-danger mt-3 d-none"></div>
+        <div id="rotateSuccess" class="alert alert-success mt-3 d-none">
+            Your rotated PDF is ready.
+            <a id="rotateDownloadBtn" href="#" class="btn btn-success btn-sm ml-2" download>
+                <i class="fa fa-download"></i> Download
+            </a>
+        </div>
+        <button type="submit" id="rotateBtn" class="btn btn-danger">Rotate</button>
+        <button type="reset" class="btn btn-secondary">Cancel</button>
+    </form>
+</div>
+<script>
+(function () {
+    var form      = document.getElementById('rotateForm');
+    var fileEl    = document.getElementById('file');
+    var custRad   = document.getElementById('rotCustom');
+    var custInp   = document.getElementById('customDegree');
+    var errBox    = document.getElementById('rotateError');
+    var okBox     = document.getElementById('rotateSuccess');
+    var dlBtn     = document.getElementById('rotateDownloadBtn');
+    var rotateBtn = document.getElementById('rotateBtn');
+    document.querySelectorAll('input[name="degreeOfRotation"]').forEach(function (r) {
+        r.addEventListener('change', function () {
+            custInp.disabled = !custRad.checked;
+            if (custRad.checked) custInp.focus();
+        });
+    });
+    // --- Reset stale state -------------------------------------------------
+    // Without this, a previous run's green "Download" panel stayed on screen
+    // after the user picked a different file, so they could download the wrong
+    // (older) result. Also wire Cancel, which was a bare type="reset" and left
+    // the banners behind.
+    function clearBanners() {
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+    }
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="file"]'), function (inp) {
+        inp.addEventListener('change', clearBanners);
+    });
+    Array.prototype.forEach.call(form.querySelectorAll('button[type="reset"]'), function (b) {
+        b.addEventListener('click', function () {
+            setTimeout(function () {
+                clearBanners();
+                rotateBtn.disabled = false;
+                rotateBtn.textContent = 'Rotate';
+            }, 0);
+        });
+    });
+    form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+        if (!fileEl.files[0]) {
+            errBox.textContent = 'Please upload a PDF file.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var chosen = document.querySelector('input[name="degreeOfRotation"]:checked');
+        if (!chosen) {
+            errBox.textContent = 'Please choose a rotation.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var degreeStr = chosen.value;
+        if (degreeStr === 'custom') {
+            degreeStr = (custInp.value || '').trim();
+            if (!degreeStr) {
+                errBox.textContent = 'Please enter a custom rotation degree.';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            var d = parseInt(degreeStr, 10);
+            if (isNaN(d) || String(d) !== degreeStr.replace(/^\+/, '')) {
+                errBox.textContent = 'Custom rotation must be an integer (e.g. 90, 180, -90).';
+                errBox.classList.remove('d-none');
+                return;
+            }
+            if (d % 90 !== 0) {
+                errBox.textContent = 'Rotation degree must be a multiple of 90.';
+                errBox.classList.remove('d-none');
+                return;
+            }
+        }
+        var fd = new FormData(form);
+        rotateBtn.disabled = true;
+        rotateBtn.textContent = 'Rotating...';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    dlBtn.href = res.body.url;
+                    dlBtn.setAttribute('download', res.body.name || 'rotated.pdf');
+                    okBox.classList.remove('d-none');
+                } else {
+                    errBox.textContent = (res.body && res.body.error) || 'Rotate failed.';
+                    errBox.classList.remove('d-none');
+                }
+            })
+            .catch(function (e) {
+                errBox.textContent = 'Network error: ' + e;
+                errBox.classList.remove('d-none');
+            })
+            .finally(function () {
+                rotateBtn.disabled = false;
+                rotateBtn.textContent = 'Rotate';
+            });
+    });
+})();
+</script>
+{% endblock %}

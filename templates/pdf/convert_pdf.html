@@ -1,0 +1,115 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content">
+    <h2 class="pb-2 text-danger">Convert to PDF</h2>
+    <form id="convertForm" action="{{ url_for('convert_pdf_view') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <label for="convertFile">Select a file to convert to PDF</label>
+            <input type="file" id="convertFile" name="file" required
+                   accept=".jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/jpeg,image/png">
+            <small class="text-muted d-block mt-1">
+                Supported input: <strong>JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX, PPT, PPTX</strong>.
+            </small>
+            <p id="fileInfo" class="mt-2 mb-0 text-muted"><em>No file selected yet.</em></p>
+        </div>
+        <div id="convertError"   class="alert alert-danger  mt-3 d-none"></div>
+        <div id="convertSuccess" class="alert alert-success mt-3 d-none">
+            <div id="convertSummary"></div>
+            <a id="convertDownloadBtn" href="#" class="btn btn-success btn-sm mt-2" download>
+                <i class="fa fa-download"></i> Download
+            </a>
+        </div>
+        <button type="submit" id="convertBtn" class="btn btn-danger">Convert</button>
+        <button type="button" id="cancelBtn"  class="btn btn-secondary">Cancel</button>
+    </form>
+</div>
+<script>
+(function () {
+    var form       = document.getElementById('convertForm');
+    var fileInput  = document.getElementById('convertFile');
+    var fileInfo   = document.getElementById('fileInfo');
+    var errBox     = document.getElementById('convertError');
+    var okBox      = document.getElementById('convertSuccess');
+    var summary    = document.getElementById('convertSummary');
+    var dlBtn      = document.getElementById('convertDownloadBtn');
+    var convertBtn = document.getElementById('convertBtn');
+    var cancelBtn  = document.getElementById('cancelBtn');
+    var ALLOWED = ['.jpg', '.jpeg', '.png',
+                   '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'];
+    function humanSize(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(2) + ' KB';
+        return (b / 1024 / 1024).toFixed(2) + ' MB';
+    }
+    function extOf(name) {
+        var m = /(\.[A-Za-z0-9]+)$/.exec(name || '');
+        return m ? m[1].toLowerCase() : '';
+    }
+    function hideMessages() { errBox.classList.add('d-none'); okBox.classList.add('d-none'); }
+    function showError(msg) { errBox.textContent = msg; errBox.classList.remove('d-none'); }
+    function resetScreen() {
+        form.reset();
+        fileInfo.innerHTML = '<em>No file selected yet.</em>';
+        hideMessages();
+        convertBtn.disabled = false;
+        convertBtn.textContent = 'Convert';
+    }
+    fileInput.addEventListener('change', function () {
+        hideMessages();
+        var f = fileInput.files[0];
+        if (!f) { fileInfo.innerHTML = '<em>No file selected yet.</em>'; return; }
+        var ext = extOf(f.name);
+        var isPdf = ext === '.pdf';
+        var supported = ALLOWED.indexOf(ext) !== -1;
+        var label = '<strong>' + f.name + '</strong> &mdash; ' + humanSize(f.size);
+        if (ext) label += ' &mdash; type <code>' + ext + '</code>';
+        fileInfo.innerHTML = label;
+        if (isPdf) {
+            showError('This file is already a PDF – no conversion needed.');
+        } else if (!supported) {
+            showError('Unsupported file type "' + (ext || 'unknown') +
+                      '". Please upload JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX, PPT or PPTX.');
+        }
+    });
+    cancelBtn.addEventListener('click', resetScreen);
+    form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        hideMessages();
+        var f = fileInput.files[0];
+        if (!f) { showError('Please upload a file.'); return; }
+        var ext = extOf(f.name);
+        if (ext === '.pdf') { showError('This file is already a PDF – no conversion needed.'); return; }
+        if (ALLOWED.indexOf(ext) === -1) {
+            showError('Unsupported file type "' + (ext || 'unknown') + '".');
+            return;
+        }
+        var fd = new FormData();
+        fd.append('file', f, f.name);
+        convertBtn.disabled = true;
+        convertBtn.textContent = 'Converting...';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) {
+                return r.json()
+                    .then(function (j) { return { ok: r.ok, body: j }; })
+                    .catch(function () { return { ok: false, body: { error: 'Server returned an unexpected response.' } }; });
+            })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    summary.innerHTML =
+                        'Converted <strong>' + (res.body.original_name || 'your file') + '</strong> to PDF.';
+                    dlBtn.href = res.body.url;
+                    dlBtn.setAttribute('download', res.body.name || 'converted.pdf');
+                    okBox.classList.remove('d-none');
+                } else {
+                    showError((res.body && res.body.error) || 'Conversion failed.');
+                }
+            })
+            .catch(function (e) { showError('Network error: ' + e); })
+            .finally(function () {
+                convertBtn.disabled = false;
+                convertBtn.textContent = 'Convert';
+            });
+    });
+})();
+</script>
+{% endblock %}
