@@ -1,0 +1,818 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content main-content--wide">
+    <h2 class="pb-2 text-danger">Redact PDF</h2>
+
+    <div class="rd-warn">
+        <strong>How this redaction works:</strong> a black box on its own does not redact anything —
+        the text stays selectable underneath. When you apply redactions, every page that contains a
+        redaction is <strong>rasterised and the original content is discarded</strong>, so the hidden
+        text genuinely cannot be recovered. The trade-off: those pages lose selectable text and get
+        larger. Pages with no redactions are left untouched.
+    </div>
+
+    <form id="rdForm" action="{{ url_for('redact_pdf_view') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-3">
+            <label for="rdFile">Select a file</label>
+            <input type="file" id="rdFile" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+            <small class="text-muted d-block mt-1">
+                PDF, JPG, PNG, Word, Excel and PowerPoint files are accepted
+                (non-PDFs are converted to PDF first on the server).
+            </small>
+            <p id="fileInfo" class="mt-2 mb-0 text-muted"><em>Upload a file to start redacting.</em></p>
+        </div>
+
+        <!-- Toolbar -->
+        <div id="rdToolbar" class="rd-toolbar d-none">
+            <button type="button" class="btn-action btn-tool" id="rdDraw" title="Draw a redaction box">
+                <i class="fa fa-square"></i> Draw area
+            </button>
+            <button type="button" class="btn-action" id="rdFullPage" title="Redact the whole current page">
+                <i class="fa fa-file"></i> Redact page
+            </button>
+            <button type="button" class="btn-action" id="rdFullSelected" title="Redact every page you ticked in the sidebar">
+                <i class="fa fa-files-o"></i> Redact selected pages
+            </button>
+
+            <span class="divider"></span>
+
+            <span class="rd-search-row">
+                <input type="text" id="rdQuery" class="form-control form-control-sm" placeholder="Find text…">
+                <label class="rd-group-label mb-0" title="Match case">
+                    <input type="checkbox" id="rdCase"> Aa
+                </label>
+                <button type="button" class="btn-action" id="rdFind"><i class="fa fa-search"></i> Find</button>
+                <button type="button" class="btn-action" id="rdRedactOne" disabled>Redact this one</button>
+                <button type="button" class="btn-action" id="rdRedactAll" disabled>Redact all</button>
+                <span class="rd-group-label" id="rdFindInfo"></span>
+            </span>
+
+            <span class="divider"></span>
+
+            <button type="button" class="btn-action" id="rdRemove" disabled title="Remove the selected redaction">
+                <i class="fa fa-eraser"></i> Remove redaction
+            </button>
+            <button type="button" class="btn-action" id="rdClearPage" title="Remove every redaction on this page">Clear page</button>
+            <button type="button" class="btn-action" id="rdUndo" disabled><i class="fa fa-undo"></i> Undo</button>
+            <button type="button" class="btn-action" id="rdRedo" disabled><i class="fa fa-repeat"></i> Redo</button>
+
+            <span class="divider"></span>
+
+            <button type="button" class="btn-action" id="rdPreview" title="Preview exactly what will be burned in">
+                <i class="fa fa-eye"></i> Preview
+            </button>
+            <span class="rd-hint" id="rdHint">Click “Draw area”, then drag on the page.</span>
+        </div>
+
+        <!-- Thumbnails | page | pending list -->
+        <div id="rdLayout" class="rd-layout d-none">
+            <div id="rdThumbs" class="rd-thumbs"></div>
+
+            <div class="rd-main">
+                <div class="rd-nav">
+                    <button type="button" class="btn-action" id="rdPrev"><i class="fa fa-chevron-left"></i></button>
+                    <span>Page
+                        <input type="number" id="rdPageJump" class="form-control form-control-sm page-jump" min="1" value="1">
+                        / <span id="rdTotal">?</span>
+                    </span>
+                    <button type="button" class="btn-action" id="rdNext"><i class="fa fa-chevron-right"></i></button>
+                    <span class="divider"></span>
+                    <button type="button" class="btn-action" id="rdZoomOut"><i class="fa fa-search-minus"></i></button>
+                    <span class="zoom-indicator" id="rdZoomLabel">100%</span>
+                    <button type="button" class="btn-action" id="rdZoomIn"><i class="fa fa-search-plus"></i></button>
+                    <button type="button" class="btn-action" id="rdFit">Fit</button>
+                    <span class="rd-group-label ml-auto" id="rdCount"></span>
+                </div>
+
+                <div id="rdCanvasWrap" class="rd-canvas-wrap">
+                    <div id="rdStage" class="rd-stage">
+                        <canvas id="rdCanvas"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="rdSide" class="rd-side">
+                <h6>Pending redactions</h6>
+                <div id="rdList"></div>
+                <div id="rdListEmpty" class="rd-empty">Nothing pending yet.</div>
+                <hr style="border-color:#333">
+                <h6>Pages to redact fully</h6>
+                <div id="rdPageChecks" class="rd-empty">Upload a file first.</div>
+            </div>
+        </div>
+
+        <div id="rdError" class="alert alert-danger mt-3 d-none"></div>
+        <div id="rdWarnBox" class="alert alert-warning mt-3 d-none"></div>
+        <div id="rdSuccess" class="alert alert-success mt-3 d-none">
+            <div id="rdSummary"></div>
+            <a id="rdDownload" href="#" class="btn btn-success btn-sm mt-2" download>
+                <i class="fa fa-download"></i> Download
+            </a>
+        </div>
+
+        <button type="button" id="rdApply"  class="btn btn-danger mt-2" disabled>Apply Redactions &amp; Save</button>
+        <button type="button" id="rdCancel" class="btn btn-secondary mt-2">Cancel</button>
+    </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='pdf_helpers.js') }}"></script>
+<script>
+(function () {
+    PDFHelpers.setupPdfJs();
+
+    // ---------------------------------------------------------------- state
+    var pdfBlob = null, pdfDoc = null;
+    var totalPages = 0, currentPage = 1, zoom = 1.0, viewport = null, renderTask = null;
+    var boxes = [];            // { id, page, rect(PDF pts), full_page, label, source }
+    var selectedId = null;
+    var drawMode = false, previewMode = false;
+    var undoStack = [], redoStack = [];
+    var idSeq = 0;
+    var searchHits = [], searchIdx = -1, searchQuery = '';
+    var redactedPhrases = {};  // phrases we asked the server to verify
+
+    // ---------------------------------------------------------------- DOM
+    var form = document.getElementById('rdForm');
+    var fileInput = document.getElementById('rdFile');
+    var fileInfo = document.getElementById('fileInfo');
+    var toolbar = document.getElementById('rdToolbar');
+    var layout = document.getElementById('rdLayout');
+    var thumbs = document.getElementById('rdThumbs');
+    var stage = document.getElementById('rdStage');
+    var canvas = document.getElementById('rdCanvas');
+    var wrap = document.getElementById('rdCanvasWrap');
+    var pageJump = document.getElementById('rdPageJump');
+    var totalEl = document.getElementById('rdTotal');
+    var zoomLabel = document.getElementById('rdZoomLabel');
+    var countEl = document.getElementById('rdCount');
+    var hintEl = document.getElementById('rdHint');
+    var listEl = document.getElementById('rdList');
+    var listEmpty = document.getElementById('rdListEmpty');
+    var pageChecks = document.getElementById('rdPageChecks');
+
+    var btnDraw = document.getElementById('rdDraw');
+    var btnFullPage = document.getElementById('rdFullPage');
+    var btnFullSel = document.getElementById('rdFullSelected');
+    var qInput = document.getElementById('rdQuery');
+    var caseChk = document.getElementById('rdCase');
+    var btnFind = document.getElementById('rdFind');
+    var btnRedOne = document.getElementById('rdRedactOne');
+    var btnRedAll = document.getElementById('rdRedactAll');
+    var findInfo = document.getElementById('rdFindInfo');
+    var btnRemove = document.getElementById('rdRemove');
+    var btnClearPage = document.getElementById('rdClearPage');
+    var btnUndo = document.getElementById('rdUndo');
+    var btnRedo = document.getElementById('rdRedo');
+    var btnPreview = document.getElementById('rdPreview');
+    var btnPrev = document.getElementById('rdPrev');
+    var btnNext = document.getElementById('rdNext');
+    var btnIn = document.getElementById('rdZoomIn');
+    var btnOut = document.getElementById('rdZoomOut');
+    var btnFit = document.getElementById('rdFit');
+    var btnApply = document.getElementById('rdApply');
+    var btnCancel = document.getElementById('rdCancel');
+
+    var errBox = document.getElementById('rdError');
+    var warnBox = document.getElementById('rdWarnBox');
+    var okBox = document.getElementById('rdSuccess');
+    var okLine = document.getElementById('rdSummary');
+    var dlBtn = document.getElementById('rdDownload');
+
+    // ---------------------------------------------------------------- utils
+    function hideMessages() {
+        errBox.classList.add('d-none'); okBox.classList.add('d-none'); warnBox.classList.add('d-none');
+    }
+    function showError(m) { errBox.textContent = m; errBox.classList.remove('d-none'); }
+    function humanSize(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+        return (b / 1024 / 1024).toFixed(1) + ' MB';
+    }
+    function uid() { return 'r' + (++idSeq); }
+    function byId(id) { return boxes.filter(function (b) { return b.id === id; })[0] || null; }
+    function onPage() { return boxes.filter(function (b) { return b.page === currentPage; }); }
+    function pageIsFull(p) {
+        return boxes.some(function (b) { return b.page === p && b.full_page; });
+    }
+
+    function snapshot() { return JSON.stringify(boxes); }
+    function pushHistory() {
+        undoStack.push(snapshot());
+        if (undoStack.length > 80) undoStack.shift();
+        redoStack.length = 0;
+        refresh();
+    }
+    function restore(s) {
+        boxes = JSON.parse(s);
+        selectedId = null;
+        drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+    }
+    btnUndo.addEventListener('click', function () {
+        if (!undoStack.length) return;
+        redoStack.push(snapshot()); restore(undoStack.pop());
+    });
+    btnRedo.addEventListener('click', function () {
+        if (!redoStack.length) return;
+        undoStack.push(snapshot()); restore(redoStack.pop());
+    });
+
+    function refresh() {
+        var has = !!byId(selectedId);
+        btnRemove.disabled = has ? false : true;
+        btnUndo.disabled = undoStack.length === 0;
+        btnRedo.disabled = redoStack.length === 0;
+        btnApply.disabled = !(pdfDoc && boxes.length > 0);
+        countEl.textContent = boxes.length
+            ? boxes.length + ' pending · ' + onPage().length + ' on this page'
+            : 'No redactions yet';
+        listEmpty.style.display = boxes.length ? 'none' : 'block';
+        btnDraw.classList.toggle('active', drawMode);
+        btnPreview.classList.toggle('active', previewMode);
+    }
+
+    // ---------------------------------------------------------------- coords
+    function pdfToView(rect) {
+        var a = viewport.convertToViewportPoint(rect[0], rect[1]);
+        var b = viewport.convertToViewportPoint(rect[2], rect[3]);
+        return { left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]),
+                 width: Math.abs(b[0] - a[0]), height: Math.abs(b[1] - a[1]) };
+    }
+    function viewToPdf(l, t, w, h) {
+        var a = viewport.convertToPdfPoint(l, t);
+        var b = viewport.convertToPdfPoint(l + w, t + h);
+        return [Math.min(a[0], b[0]), Math.min(a[1], b[1]),
+                Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+    }
+
+    // ---------------------------------------------------------------- render
+    function renderPage(n) {
+        if (!pdfDoc) return Promise.resolve();
+        if (renderTask) { try { renderTask.cancel(); } catch (e) {} }
+        currentPage = Math.max(1, Math.min(totalPages, n));
+        pageJump.value = String(currentPage);
+        totalEl.textContent = String(totalPages);
+        zoomLabel.textContent = Math.round(zoom * 100) + '%';
+        return pdfDoc.getPage(currentPage).then(function (page) {
+            var vp = page.getViewport({ scale: zoom });
+            viewport = vp;
+            canvas.width = Math.floor(vp.width);
+            canvas.height = Math.floor(vp.height);
+            stage.style.width = canvas.width + 'px';
+            stage.style.height = canvas.height + 'px';
+            renderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+            return renderTask.promise;
+        }).then(function () {
+            renderTask = null;
+            drawBoxes(); updateThumbBadges(); refresh();
+        }).catch(function () {});
+    }
+    btnPrev.addEventListener('click', function () { renderPage(currentPage - 1); });
+    btnNext.addEventListener('click', function () { renderPage(currentPage + 1); });
+    pageJump.addEventListener('change', function () { renderPage(parseInt(pageJump.value, 10) || 1); });
+    btnIn.addEventListener('click',  function () { zoom = Math.min(4, zoom * 1.25); renderPage(currentPage); });
+    btnOut.addEventListener('click', function () { zoom = Math.max(0.25, zoom / 1.25); renderPage(currentPage); });
+    btnFit.addEventListener('click', function () {
+        if (!pdfDoc) return;
+        pdfDoc.getPage(currentPage).then(function (page) {
+            var v = page.getViewport({ scale: 1 });
+            zoom = Math.max(0.25, Math.min(4, (wrap.clientWidth - 22) / v.width));
+            renderPage(currentPage);
+        });
+    });
+
+    function drawBoxes() {
+        Array.prototype.slice.call(stage.querySelectorAll('.rd-box, .rd-full-overlay'))
+            .forEach(function (n) { n.remove(); });
+        if (!viewport) return;
+
+        if (pageIsFull(currentPage)) {
+            var ov = document.createElement('div');
+            ov.className = 'rd-full-overlay';
+            ov.textContent = 'FULL PAGE REDACTED';
+            stage.appendChild(ov);
+        }
+
+        onPage().forEach(function (b) {
+            if (b.full_page) return;
+            var box = pdfToView(b.rect);
+            var el = document.createElement('div');
+            el.className = 'rd-box' + (b.id === selectedId ? ' selected' : '') +
+                           (b.source === 'search' ? ' from-search' : '');
+            el.style.left = box.left + 'px';
+            el.style.top = box.top + 'px';
+            el.style.width = box.width + 'px';
+            el.style.height = box.height + 'px';
+            el.dataset.id = b.id;
+            if (!previewMode) {
+                if (b.label) {
+                    var tag = document.createElement('span');
+                    tag.className = 'rd-tag';
+                    tag.textContent = b.label;
+                    el.appendChild(tag);
+                }
+                var h = document.createElement('div');
+                h.className = 'rd-handle';
+                el.appendChild(h);
+                el.addEventListener('pointerdown', startMove);
+                h.addEventListener('pointerdown', startResize);
+            }
+            stage.appendChild(el);
+        });
+    }
+
+    // ---------------------------------------------------------------- thumbnails
+    function buildThumbs() {
+        thumbs.innerHTML = '';
+        for (var p = 1; p <= totalPages; p++) {
+            (function (pn) {
+                var cell = document.createElement('div');
+                cell.className = 'rd-thumb' + (pn === currentPage ? ' active' : '');
+                cell.dataset.page = pn;
+                var c = document.createElement('canvas'); cell.appendChild(c);
+                var lab = document.createElement('span');
+                lab.className = 't-label'; lab.textContent = 'Page ' + pn; cell.appendChild(lab);
+                var cnt = document.createElement('span');
+                cnt.className = 't-count'; cnt.style.display = 'none'; cell.appendChild(cnt);
+                var full = document.createElement('span');
+                full.className = 't-full'; full.textContent = 'FULL';
+                full.style.display = 'none'; cell.appendChild(full);
+                cell.addEventListener('click', function () { renderPage(pn); });
+                thumbs.appendChild(cell);
+                pdfDoc.getPage(pn).then(function (page) {
+                    var v = page.getViewport({ scale: 0.16 });
+                    c.width = v.width; c.height = v.height;
+                    page.render({ canvasContext: c.getContext('2d'), viewport: v });
+                }).catch(function () {});
+            })(p);
+        }
+    }
+    function updateThumbBadges() {
+        Array.prototype.forEach.call(thumbs.children, function (cell) {
+            var pn = parseInt(cell.dataset.page, 10);
+            cell.classList.toggle('active', pn === currentPage);
+            var n = boxes.filter(function (b) { return b.page === pn && !b.full_page; }).length;
+            var cnt = cell.querySelector('.t-count');
+            if (cnt) { cnt.textContent = n; cnt.style.display = n ? 'inline-block' : 'none'; }
+            var f = cell.querySelector('.t-full');
+            if (f) f.style.display = pageIsFull(pn) ? 'inline-block' : 'none';
+        });
+    }
+
+    // ---------------------------------------------------------------- pending list
+    function renderList() {
+        listEl.innerHTML = '';
+        boxes.forEach(function (b) {
+            var row = document.createElement('div');
+            row.className = 'rd-item' + (b.id === selectedId ? ' selected' : '');
+            var txt = document.createElement('span');
+            txt.className = 'rd-item-txt';
+            txt.textContent = 'p' + b.page + ' · ' +
+                (b.full_page ? 'FULL PAGE' : (b.label || 'area'));
+            row.appendChild(txt);
+            var del = document.createElement('button');
+            del.type = 'button'; del.className = 'rd-item-del';
+            del.innerHTML = '<i class="fa fa-times"></i>';
+            del.title = 'Remove this redaction';
+            del.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                pushHistory();
+                boxes = boxes.filter(function (x) { return x.id !== b.id; });
+                if (selectedId === b.id) selectedId = null;
+                drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+            });
+            row.appendChild(del);
+            row.addEventListener('click', function () {
+                selectedId = b.id;
+                if (b.page !== currentPage) renderPage(b.page).then(function () {
+                    drawBoxes(); renderList(); refresh();
+                });
+                else { drawBoxes(); renderList(); refresh(); }
+            });
+            listEl.appendChild(row);
+        });
+        listEmpty.style.display = boxes.length ? 'none' : 'block';
+    }
+
+    function renderPageChecks() {
+        if (!totalPages) { pageChecks.textContent = 'Upload a file first.'; return; }
+        pageChecks.innerHTML = '';
+        pageChecks.className = '';
+        for (var p = 1; p <= totalPages; p++) {
+            (function (pn) {
+                var lab = document.createElement('label');
+                lab.style.cssText = 'display:inline-block;margin:0 8px 4px 0;font-size:.78rem;';
+                var c = document.createElement('input');
+                c.type = 'checkbox'; c.dataset.page = pn;
+                c.checked = pageIsFull(pn);
+                c.addEventListener('change', function () {
+                    pushHistory();
+                    if (c.checked) {
+                        if (!pageIsFull(pn)) {
+                            boxes.push({ id: uid(), page: pn, full_page: true, label: 'full page' });
+                        }
+                    } else {
+                        boxes = boxes.filter(function (b) { return !(b.page === pn && b.full_page); });
+                    }
+                    drawBoxes(); renderList(); refresh(); updateThumbBadges();
+                });
+                lab.appendChild(c);
+                lab.appendChild(document.createTextNode(' ' + pn));
+                pageChecks.appendChild(lab);
+            })(p);
+        }
+    }
+
+    // ---------------------------------------------------------------- draw mode
+    btnDraw.addEventListener('click', function () {
+        if (previewMode) { showError('Leave Preview mode to edit redactions.'); return; }
+        drawMode = !drawMode;
+        stage.classList.toggle('drawing', drawMode);
+        hintEl.textContent = drawMode
+            ? 'Drag on the page to draw a redaction box.'
+            : 'Click “Draw area”, then drag on the page.';
+        refresh();
+    });
+
+    var drag = null;
+    stage.addEventListener('pointerdown', function (ev) {
+        if (!drawMode || previewMode || !viewport) return;
+        if (ev.target.closest('.rd-box')) return;
+        ev.preventDefault();
+        var r = stage.getBoundingClientRect();
+        drag = { x0: ev.clientX - r.left, y0: ev.clientY - r.top };
+        var ghost = document.createElement('div');
+        ghost.className = 'rd-box selected';
+        ghost.id = 'rdGhost';
+        ghost.style.left = drag.x0 + 'px'; ghost.style.top = drag.y0 + 'px';
+        ghost.style.width = '0px'; ghost.style.height = '0px';
+        stage.appendChild(ghost);
+        try { stage.setPointerCapture(ev.pointerId); } catch (e) {}
+    });
+    stage.addEventListener('pointermove', function (ev) {
+        if (!drag) return;
+        var g = document.getElementById('rdGhost');
+        if (!g) return;
+        var r = stage.getBoundingClientRect();
+        var x = ev.clientX - r.left, y = ev.clientY - r.top;
+        g.style.left = Math.min(x, drag.x0) + 'px';
+        g.style.top = Math.min(y, drag.y0) + 'px';
+        g.style.width = Math.abs(x - drag.x0) + 'px';
+        g.style.height = Math.abs(y - drag.y0) + 'px';
+    });
+    stage.addEventListener('pointerup', function (ev) {
+        if (!drag) return;
+        var g = document.getElementById('rdGhost');
+        var r = stage.getBoundingClientRect();
+        var x = ev.clientX - r.left, y = ev.clientY - r.top;
+        var l = Math.min(x, drag.x0), t = Math.min(y, drag.y0);
+        var w = Math.abs(x - drag.x0), h = Math.abs(y - drag.y0);
+        drag = null;
+        if (g) g.remove();
+        if (w < 5 || h < 5) return;
+        l = Math.max(0, Math.min(l, canvas.width - 1));
+        t = Math.max(0, Math.min(t, canvas.height - 1));
+        w = Math.min(w, canvas.width - l);
+        h = Math.min(h, canvas.height - t);
+        pushHistory();
+        var b = { id: uid(), page: currentPage, rect: viewToPdf(l, t, w, h),
+                  full_page: false, label: 'area', source: 'manual' };
+        boxes.push(b);
+        selectedId = b.id;
+        drawBoxes(); renderList(); refresh(); updateThumbBadges();
+    });
+
+    // ---------------------------------------------------------------- move/resize
+    var moveCtx = null, resizeCtx = null;
+    function startMove(ev) {
+        if (previewMode) return;
+        ev.stopPropagation();
+        var el = ev.currentTarget, b = byId(el.dataset.id);
+        if (!b) return;
+        selectedId = b.id; drawBoxes(); renderList(); refresh();
+        el = stage.querySelector('.rd-box[data-id="' + b.id + '"]');
+        var box = pdfToView(b.rect);
+        moveCtx = { b: b, el: el, sx: ev.clientX, sy: ev.clientY,
+                    left: box.left, top: box.top, w: box.width, h: box.height, moved: false };
+        try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+    function startResize(ev) {
+        if (previewMode) return;
+        ev.stopPropagation();
+        var el = ev.currentTarget.parentNode, b = byId(el.dataset.id);
+        if (!b) return;
+        selectedId = b.id;
+        var box = pdfToView(b.rect);
+        resizeCtx = { b: b, el: el, sx: ev.clientX, sy: ev.clientY,
+                      left: box.left, top: box.top, w: box.width, h: box.height, moved: false };
+        try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+    document.addEventListener('pointermove', function (ev) {
+        if (moveCtx) {
+            var dx = ev.clientX - moveCtx.sx, dy = ev.clientY - moveCtx.sy;
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moveCtx.moved = true;
+            var nl = Math.max(0, Math.min(moveCtx.left + dx, canvas.width - moveCtx.w));
+            var nt = Math.max(0, Math.min(moveCtx.top + dy, canvas.height - moveCtx.h));
+            moveCtx.el.style.left = nl + 'px'; moveCtx.el.style.top = nt + 'px';
+            moveCtx.cl = nl; moveCtx.ct = nt;
+        } else if (resizeCtx) {
+            var dw = ev.clientX - resizeCtx.sx, dh = ev.clientY - resizeCtx.sy;
+            if (Math.abs(dw) > 2 || Math.abs(dh) > 2) resizeCtx.moved = true;
+            var nw = Math.max(5, Math.min(resizeCtx.w + dw, canvas.width - resizeCtx.left));
+            var nh = Math.max(5, Math.min(resizeCtx.h + dh, canvas.height - resizeCtx.top));
+            resizeCtx.el.style.width = nw + 'px'; resizeCtx.el.style.height = nh + 'px';
+            resizeCtx.cw = nw; resizeCtx.ch = nh;
+        }
+    });
+    document.addEventListener('pointerup', function () {
+        if (moveCtx) {
+            if (moveCtx.moved) {
+                pushHistory();
+                moveCtx.b.rect = viewToPdf(
+                    moveCtx.cl != null ? moveCtx.cl : moveCtx.left,
+                    moveCtx.ct != null ? moveCtx.ct : moveCtx.top,
+                    moveCtx.w, moveCtx.h);
+            }
+            moveCtx = null; drawBoxes(); renderList(); refresh();
+        }
+        if (resizeCtx) {
+            if (resizeCtx.moved) {
+                pushHistory();
+                resizeCtx.b.rect = viewToPdf(
+                    resizeCtx.left, resizeCtx.top,
+                    resizeCtx.cw != null ? resizeCtx.cw : resizeCtx.w,
+                    resizeCtx.ch != null ? resizeCtx.ch : resizeCtx.h);
+            }
+            resizeCtx = null; drawBoxes(); renderList(); refresh();
+        }
+    });
+
+    // ---------------------------------------------------------------- full page
+    btnFullPage.addEventListener('click', function () {
+        if (!pdfDoc) return;
+        if (pageIsFull(currentPage)) { showError('This page is already fully redacted.'); return; }
+        hideMessages();
+        pushHistory();
+        boxes.push({ id: uid(), page: currentPage, full_page: true, label: 'full page' });
+        drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+    });
+    btnFullSel.addEventListener('click', function () {
+        var checked = Array.prototype.slice
+            .call(pageChecks.querySelectorAll('input[type=checkbox]'))
+            .filter(function (c) { return c.checked; })
+            .map(function (c) { return parseInt(c.dataset.page, 10); });
+        if (!checked.length) {
+            showError('Tick the pages you want to redact fully in the "Pages to redact fully" list.');
+            return;
+        }
+        hideMessages();
+        pushHistory();
+        checked.forEach(function (pn) {
+            if (!pageIsFull(pn)) boxes.push({ id: uid(), page: pn, full_page: true, label: 'full page' });
+        });
+        drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+    });
+
+    // ---------------------------------------------------------------- search
+    btnFind.addEventListener('click', function () {
+        hideMessages();
+        if (!pdfBlob) { showError('Please upload a file first.'); return; }
+        var q = qInput.value.trim();
+        if (!q) { showError('Please type the text you want to find.'); return; }
+        var fd = new FormData();
+        fd.append('action', 'search');
+        fd.append('file', pdfBlob, 'base.pdf');
+        fd.append('query', q);
+        fd.append('case_sensitive', caseChk.checked ? '1' : '0');
+        btnFind.disabled = true;
+        findInfo.textContent = 'searching…';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (!res.ok || !res.body.success) {
+                    throw new Error((res.body && res.body.error) || 'Search failed.');
+                }
+                searchHits = res.body.hits || [];
+                searchQuery = res.body.query || q;
+                searchIdx = searchHits.length ? 0 : -1;
+                findInfo.textContent = searchHits.length
+                    ? searchHits.length + ' match(es)'
+                    : 'no matches';
+                btnRedOne.disabled = searchHits.length === 0;
+                btnRedAll.disabled = searchHits.length === 0;
+                if (searchHits.length) gotoHit(0);
+            })
+            .catch(function (e) {
+                searchHits = []; searchIdx = -1;
+                btnRedOne.disabled = true; btnRedAll.disabled = true;
+                findInfo.textContent = '';
+                showError(e.message || String(e));
+            })
+            .finally(function () { btnFind.disabled = false; });
+    });
+
+    function gotoHit(i) {
+        if (i < 0 || i >= searchHits.length) return;
+        searchIdx = i;
+        var h = searchHits[i];
+        findInfo.textContent = (i + 1) + ' / ' + searchHits.length + ' match(es)';
+        if (h.page !== currentPage) renderPage(h.page);
+    }
+
+    btnRedOne.addEventListener('click', function () {
+        if (searchIdx < 0 || !searchHits.length) return;
+        hideMessages();
+        pushHistory();
+        var h = searchHits[searchIdx];
+        boxes.push({ id: uid(), page: h.page, rect: h.rect, full_page: false,
+                     label: h.text, source: 'search' });
+        redactedPhrases[searchQuery] = true;
+        // advance to the next occurrence for convenience
+        var next = Math.min(searchIdx + 1, searchHits.length - 1);
+        drawBoxes(); renderList(); refresh(); updateThumbBadges();
+        if (next !== searchIdx) gotoHit(next);
+    });
+    btnRedAll.addEventListener('click', function () {
+        if (!searchHits.length) return;
+        hideMessages();
+        pushHistory();
+        searchHits.forEach(function (h) {
+            boxes.push({ id: uid(), page: h.page, rect: h.rect, full_page: false,
+                         label: h.text, source: 'search' });
+        });
+        redactedPhrases[searchQuery] = true;
+        drawBoxes(); renderList(); refresh(); updateThumbBadges();
+        findInfo.textContent = searchHits.length + ' match(es) queued';
+    });
+
+    // ---------------------------------------------------------------- remove / clear
+    btnRemove.addEventListener('click', function () {
+        var b = byId(selectedId);
+        if (!b) return;
+        pushHistory();
+        boxes = boxes.filter(function (x) { return x.id !== b.id; });
+        selectedId = null;
+        drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+    });
+    btnClearPage.addEventListener('click', function () {
+        if (!onPage().length) return;
+        pushHistory();
+        boxes = boxes.filter(function (b) { return b.page !== currentPage; });
+        selectedId = null;
+        drawBoxes(); renderList(); renderPageChecks(); refresh(); updateThumbBadges();
+    });
+
+    // ---------------------------------------------------------------- preview
+    btnPreview.addEventListener('click', function () {
+        if (!pdfDoc) return;
+        previewMode = !previewMode;
+        stage.classList.toggle('preview', previewMode);
+        if (previewMode) {
+            drawMode = false;
+            stage.classList.remove('drawing');
+            selectedId = null;
+        }
+        hintEl.textContent = previewMode
+            ? 'Preview: this is exactly what will be burned in. Click Preview again to keep editing.'
+            : 'Click “Draw area”, then drag on the page.';
+        drawBoxes(); renderList(); refresh();
+    });
+
+    // ---------------------------------------------------------------- upload
+    function prepareFile(f) {
+        return PDFHelpers.prepareViaServer(form.action, f);
+    }
+
+    function resetAll() {
+        pdfBlob = null;
+        if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} pdfDoc = null; }
+        totalPages = 0; currentPage = 1; zoom = 1.0; viewport = null;
+        boxes = []; selectedId = null; drawMode = false; previewMode = false;
+        undoStack = []; redoStack = []; idSeq = 0;
+        searchHits = []; searchIdx = -1; searchQuery = ''; redactedPhrases = {};
+        canvas.width = 0; canvas.height = 0;
+        Array.prototype.slice.call(stage.querySelectorAll('.rd-box, .rd-full-overlay'))
+            .forEach(function (n) { n.remove(); });
+        stage.classList.remove('drawing', 'preview');
+        thumbs.innerHTML = ''; listEl.innerHTML = '';
+        listEmpty.style.display = 'block';
+        pageChecks.className = 'rd-empty';
+        pageChecks.textContent = 'Upload a file first.';
+        toolbar.classList.add('d-none'); layout.classList.add('d-none');
+        qInput.value = ''; caseChk.checked = false; findInfo.textContent = '';
+        btnRedOne.disabled = true; btnRedAll.disabled = true;
+        btnApply.disabled = true; btnApply.textContent = 'Apply Redactions & Save';
+        fileInfo.innerHTML = '<em>Upload a file to start redacting.</em>';
+        countEl.textContent = '';
+        hintEl.textContent = 'Click “Draw area”, then drag on the page.';
+    }
+
+    fileInput.addEventListener('change', function () {
+        hideMessages(); resetAll();
+        var f = fileInput.files[0];
+        if (!f) return;
+        fileInfo.innerHTML = 'Loading <strong>' + f.name + '</strong> (' + humanSize(f.size) + ')…';
+        prepareFile(f).then(function (res) {
+            pdfBlob = res.blob; pdfDoc = res.doc;
+            totalPages = pdfDoc.numPages; currentPage = 1;
+            pageJump.max = totalPages;
+            fileInfo.innerHTML = '<strong>' + f.name + '</strong> loaded — ' +
+                totalPages + ' page' + (totalPages === 1 ? '' : 's') + '.';
+            toolbar.classList.remove('d-none');
+            layout.classList.remove('d-none');
+            buildThumbs(); renderPageChecks();
+            return renderPage(1);
+        }).then(function () {
+            btnFit.click(); refresh();
+        }).catch(function (e) {
+            resetAll(); showError(e.message || String(e));
+        });
+    });
+
+    // ---------------------------------------------------------------- apply
+    btnApply.addEventListener('click', function () {
+        hideMessages();
+        if (!pdfBlob) { showError('Please upload a file first.'); return; }
+        if (!boxes.length) { showError('Please add at least one redaction area before applying.'); return; }
+        if (!window.confirm(
+            'Apply redactions permanently?\n\n' +
+            'Pages containing redactions will be rasterised and their original ' +
+            'content discarded — this cannot be undone in the output file.')) {
+            return;
+        }
+
+        var payload = boxes.map(function (b) {
+            return b.full_page
+                ? { page: b.page, full_page: true }
+                : { page: b.page, rect: b.rect };
+        });
+
+        var fd = new FormData();
+        fd.append('action', 'save');
+        fd.append('file', pdfBlob, 'base.pdf');
+        fd.append('boxes', JSON.stringify(payload));
+        fd.append('verify', JSON.stringify(Object.keys(redactedPhrases)));
+
+        btnApply.disabled = true;
+        btnApply.textContent = 'Applying…';
+
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) {
+                return r.json()
+                    .then(function (j) { return { ok: r.ok, body: j }; })
+                    .catch(function () { return { ok: false, body: { error: 'Server returned an unexpected response.' } }; });
+            })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    var b = res.body;
+                    okLine.innerHTML = 'Redactions applied to page(s) <strong>' +
+                        (b.redacted_pages || []).join(', ') + '</strong>' +
+                        ((b.full_pages && b.full_pages.length)
+                            ? ' (full page: ' + b.full_pages.join(', ') + ')' : '') +
+                        '. The original content on those pages has been removed.';
+                    dlBtn.href = b.url;
+                    dlBtn.setAttribute('download', b.name || 'redacted.pdf');
+                    okBox.classList.remove('d-none');
+                    if (b.leaked && b.leaked.length) {
+                        warnBox.textContent = 'Warning: the following text is still extractable from ' +
+                            'the output: ' + b.leaked.join(', ') +
+                            '. It may appear outside the areas you redacted — please review.';
+                        warnBox.classList.remove('d-none');
+                    }
+                } else {
+                    showError((res.body && res.body.error) || 'Could not apply redactions.');
+                }
+            })
+            .catch(function (e) { showError('Network error: ' + e); })
+            .finally(function () {
+                btnApply.textContent = 'Apply Redactions & Save';
+                refresh();
+            });
+    });
+
+    // ---------------------------------------------------------------- cancel
+    btnCancel.addEventListener('click', function () {
+        form.reset(); resetAll(); hideMessages();
+    });
+
+    // ---------------------------------------------------------------- keyboard
+    document.addEventListener('keydown', function (ev) {
+        if (!pdfDoc) return;
+        var ae = document.activeElement;
+        if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
+        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
+            ev.preventDefault(); btnUndo.click();
+        } else if ((ev.ctrlKey || ev.metaKey) &&
+                   (ev.key.toLowerCase() === 'y' || (ev.shiftKey && ev.key.toLowerCase() === 'z'))) {
+            ev.preventDefault(); btnRedo.click();
+        } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+            if (byId(selectedId)) { ev.preventDefault(); btnRemove.click(); }
+        } else if (ev.key === 'Escape') {
+            drawMode = false; stage.classList.remove('drawing'); refresh();
+        }
+    });
+
+    refresh();
+})();
+</script>
+{% endblock %}

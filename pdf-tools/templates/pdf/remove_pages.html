@@ -1,0 +1,173 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content">
+    <h2 class="pb-2 text-danger">Remove Pages</h2>
+    <form id="removeForm" action="{{ url_for('remove_pages') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <input type="file" id="removeFile" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+            <small class="text-muted d-block mt-1">
+                PDF, JPG, PNG, Word, Excel and PowerPoint files are accepted (non-PDFs are converted first).
+            </small>
+            <p id="pageInfo" class="mt-2 mb-0 text-muted"><em>Upload a file to see its page count.</em></p>
+        </div>
+        <div class="form-group">
+            <label for="rangeInput">Pages to remove</label>
+            <p class="text-muted mb-1">Type page numbers (E.g.: 1-5,6,7-8,9) <em>or</em> click thumbnails below. The two inputs stay in sync.</p>
+            <input type="text" id="rangeInput" name="range" class="form-control" autocomplete="off">
+        </div>
+        <div id="thumbGridWrap" class="form-group d-none">
+            <div class="d-flex align-items-center mb-2" style="gap:8px;">
+                <span>Click page thumbnails to select pages to remove</span>
+                <button type="button" id="clearSelBtn" class="btn-action ml-auto">
+                    <i class="fa fa-times"></i> Clear
+                </button>
+            </div>
+            <div id="thumbGrid" class="thumb-grid"></div>
+        </div>
+        <div id="removeError" class="alert alert-danger mt-3 d-none"></div>
+        <div id="removeSuccess" class="alert alert-success mt-3 d-none">
+            <div id="removeSummary"></div>
+            <a id="removeDownloadBtn" href="#" class="btn btn-success btn-sm mt-2" download>
+                <i class="fa fa-download"></i> Download
+            </a>
+        </div>
+        <button type="submit" id="removeBtn" class="btn btn-danger">Remove</button>
+        <button type="reset" id="resetBtn" class="btn btn-secondary">Cancel</button>
+    </form>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='pdf_helpers.js') }}"></script>
+<script>
+(function () {
+    PDFHelpers.setupPdfJs();
+    var fileInput    = document.getElementById('removeFile');
+    var pageInfo     = document.getElementById('pageInfo');
+    var rangeInput   = document.getElementById('rangeInput');
+    var form         = document.getElementById('removeForm');
+    var errBox       = document.getElementById('removeError');
+    var okBox        = document.getElementById('removeSuccess');
+    var summary      = document.getElementById('removeSummary');
+    var dlBtn        = document.getElementById('removeDownloadBtn');
+    var removeBtn    = document.getElementById('removeBtn');
+    var resetBtn     = document.getElementById('resetBtn');
+    var clearSelBtn  = document.getElementById('clearSelBtn');
+    var gridWrap     = document.getElementById('thumbGridWrap');
+    var gridEl       = document.getElementById('thumbGrid');
+    var currentPdf  = null;
+    var totalPages  = 0;
+    var cells       = {};
+    var selectedSet = new Set();
+    function syncInputFromSelection() {
+        rangeInput.value = PDFHelpers.compressPages(Array.from(selectedSet));
+    }
+    function syncSelectionFromInput() {
+        if (!totalPages) return;
+        selectedSet = PDFHelpers.expandRanges(rangeInput.value, totalPages);
+        PDFHelpers.setGridSelection(cells, selectedSet);
+    }
+    function isPdf(f) {
+        return f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+    }
+    fileInput.addEventListener('change', function () {
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+        gridWrap.classList.add('d-none');
+        gridEl.innerHTML = '';
+        selectedSet = new Set();
+        totalPages = 0;
+        currentPdf = null;
+        var f = fileInput.files[0];
+        if (!f) {
+            pageInfo.innerHTML = '<em>Upload a file to see its page count.</em>';
+            return;
+        }
+        if (!isPdf(f)) {
+            pageInfo.innerHTML = '<strong>' + f.name + '</strong> will be converted to PDF ' +
+                'on the server. Thumbnail preview is only available for PDFs.';
+            return;
+        }
+
+        PDFHelpers.loadPdfFromFile(f).then(function (pdf) {
+            currentPdf = pdf;
+            totalPages = pdf.numPages;
+            pageInfo.innerHTML = '<strong>' + f.name + '</strong> has <strong>' +
+                                 totalPages + '</strong> page(s).';
+            cells = PDFHelpers.buildThumbGrid(pdf, gridEl, function (pageNum, on) {
+                if (on) selectedSet.add(pageNum); else selectedSet.delete(pageNum);
+                syncInputFromSelection();
+            });
+            syncSelectionFromInput();
+            gridWrap.classList.remove('d-none');
+        }).catch(function () {
+            pageInfo.textContent = 'Could not read PDF; please try another file.';
+            totalPages = 0;
+        });
+    });
+    rangeInput.addEventListener('input', syncSelectionFromInput);
+    clearSelBtn.addEventListener('click', function () {
+        selectedSet = new Set();
+        rangeInput.value = '';
+        PDFHelpers.setGridSelection(cells, selectedSet);
+    });
+    resetBtn.addEventListener('click', function () {
+        setTimeout(function () {
+            pageInfo.innerHTML = '<em>Upload a PDF to see its page count.</em>';
+            errBox.classList.add('d-none');
+            okBox.classList.add('d-none');
+            gridWrap.classList.add('d-none');
+            gridEl.innerHTML = '';
+            selectedSet = new Set();
+            totalPages = 0;
+            currentPdf = null;
+        }, 0);
+    });
+    form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        errBox.classList.add('d-none');
+        okBox.classList.add('d-none');
+        var f = fileInput.files[0];
+        if (!f) {
+            errBox.textContent = 'Please upload a PDF file.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        if (!rangeInput.value.trim()) {
+            errBox.textContent = 'Please enter page range(s) to remove (e.g. 1-3,5,7), or click thumbnails.';
+            errBox.classList.remove('d-none');
+            return;
+        }
+        var fd = new FormData();
+        fd.append('file', f, f.name);
+        fd.append('range', rangeInput.value);
+        removeBtn.disabled = true;
+        removeBtn.textContent = 'Processing...';
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.body.success) {
+                    var msg = 'Removed page(s): ' + res.body.removed.join(', ') +
+                              '. Original PDF had ' + res.body.total_pages + ' page(s).';
+                    if (res.body.ignored && res.body.ignored.length) {
+                        msg += ' Ignored out-of-range page(s): ' + res.body.ignored.join(', ') + '.';
+                    }
+                    summary.textContent = msg;
+                    dlBtn.href = res.body.url;
+                    dlBtn.setAttribute('download', res.body.name || 'removed.pdf');
+                    okBox.classList.remove('d-none');
+                } else {
+                    errBox.textContent = (res.body && res.body.error) || 'Failed to remove pages.';
+                    errBox.classList.remove('d-none');
+                }
+            })
+            .catch(function (e) {
+                errBox.textContent = 'Network error: ' + e;
+                errBox.classList.remove('d-none');
+            })
+            .finally(function () {
+                removeBtn.disabled = false;
+                removeBtn.textContent = 'Remove';
+            });
+    });
+})();
+</script>
+{% endblock %}

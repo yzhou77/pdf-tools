@@ -1,0 +1,489 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container main-content main-content--wide">
+    <h2 class="pb-2 text-danger">OCR PDF</h2>
+
+    <form id="ocrForm" action="{{ url_for('ocr_pdf_view') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group mt-4">
+            <label for="ocrFile">Select a file</label>
+            <input type="file" id="ocrFile" name="file" accept="{{ UPLOAD_ACCEPT }}" required>
+            <small class="text-muted d-block mt-1">
+                PDF, JPG, PNG, Word, Excel and PowerPoint files are accepted
+                (non-PDFs are converted to PDF first on the server).
+            </small>
+            <p id="fileInfo" class="mt-2 mb-0 text-muted">
+                <em>Upload a file to preview and choose OCR settings.</em>
+            </p>
+        </div>
+
+        <!-- Settings, shown once a file is loaded -->
+        <div id="ocrSettings" class="form-group d-none">
+            <div class="ocr-options">
+                <div class="ocr-col">
+                    <label for="ocrLang" class="mb-1">OCR language</label>
+                    <select id="ocrLang" class="form-control form-control-sm"></select>
+                    <small id="ocrLangNote" class="text-muted d-block mt-1"></small>
+                </div>
+
+                <div class="ocr-col">
+                    <label class="mb-1">Pages to process</label>
+                    <div>
+                        <label class="ocr-inline"><input type="radio" name="ocrScope" value="all" checked> All pages</label>
+                        <label class="ocr-inline"><input type="radio" name="ocrScope" value="current"> Current page</label>
+                        <label class="ocr-inline"><input type="radio" name="ocrScope" value="selected"> Selected</label>
+                        <label class="ocr-inline"><input type="radio" name="ocrScope" value="range"> Range</label>
+                    </div>
+                    <input type="text" id="ocrPagesInput" class="form-control form-control-sm mt-1"
+                           placeholder='e.g. "2,5,8" for Selected   or   "1-3,5,7-9" for Range'
+                           disabled>
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-danger" id="startOcrBtn" disabled>Start OCR</button>
+            <button type="button" class="btn-action" id="cancelOcrBtn" disabled>Stop</button>
+
+            <div id="ocrProgressWrap" class="d-none">
+                <div class="ocr-progress-wrap">
+                    <div id="ocrProgressBar" class="ocr-progress-bar"></div>
+                    <div id="ocrProgressLabel" class="ocr-progress-label">0%</div>
+                </div>
+                <div id="ocrProgressMsg" class="text-muted small"></div>
+            </div>
+        </div>
+
+        <!-- Viewer: preview / text / side-by-side -->
+        <div id="ocrViewerWrap" class="d-none mt-3">
+            <div class="ocr-view-tabs">
+                <button type="button" class="btn-action active" data-view="preview" id="viewPreviewBtn">
+                    <i class="fa fa-file-pdf-o"></i> Original preview
+                </button>
+                <button type="button" class="btn-action" data-view="text" id="viewTextBtn">
+                    <i class="fa fa-align-left"></i> Recognized text
+                </button>
+                <button type="button" class="btn-action" data-view="side" id="viewSideBtn">
+                    <i class="fa fa-columns"></i> Side-by-side
+                </button>
+            </div>
+
+            <div id="ocrViewer" class="ocr-viewer view-preview">
+                <div class="ocr-pdf-panel">
+                    <div class="ocr-panel-head">
+                        <span class="ocr-page-nav">
+                            <button type="button" class="btn-action" id="prevPageBtn" title="Previous page">
+                                <i class="fa fa-chevron-left"></i>
+                            </button>
+                            <input type="number" id="pageJump" class="form-control form-control-sm" min="1" value="1">
+                            / <span id="totalPages">?</span>
+                            <button type="button" class="btn-action" id="nextPageBtn" title="Next page">
+                                <i class="fa fa-chevron-right"></i>
+                            </button>
+                        </span>
+                        <span class="ml-2"></span>
+                        <button type="button" class="btn-action" id="zoomOutBtn" title="Zoom out"><i class="fa fa-search-minus"></i></button>
+                        <span id="zoomLabel" class="zoom-indicator">100%</span>
+                        <button type="button" class="btn-action" id="zoomInBtn" title="Zoom in"><i class="fa fa-search-plus"></i></button>
+                        <button type="button" class="btn-action" id="fitBtn" title="Fit to width">Fit</button>
+                    </div>
+                    <div id="ocrPdfScroll" class="ocr-pdf-scroll">
+                        <canvas id="ocrCanvas"></canvas>
+                    </div>
+                </div>
+
+                <div class="ocr-text-panel">
+                    <div class="ocr-panel-head">
+                        <span class="small text-muted">Recognized text for current page</span>
+                        <span class="ml-auto small text-muted" id="textStatus"></span>
+                    </div>
+                    <textarea id="ocrTextArea" class="ocr-text-area" readonly
+                              placeholder="Run OCR to see the recognized text here."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <div id="ocrError"   class="alert alert-danger mt-3 d-none"></div>
+        <div id="ocrSuccess" class="alert alert-success mt-3 d-none">
+            <div id="ocrSummary"></div>
+            <div class="mt-2" style="display:flex; flex-wrap:wrap; gap:6px;">
+                <a id="dlPdfBtn" href="#" class="btn btn-success btn-sm" download>
+                    <i class="fa fa-download"></i> Download searchable PDF
+                </a>
+                <a id="dlTxtBtn" href="#" class="btn btn-success btn-sm" download>
+                    <i class="fa fa-download"></i> Download extracted text
+                </a>
+            </div>
+        </div>
+
+        <button type="button" id="cancelBtn" class="btn btn-secondary mt-2">Cancel</button>
+    </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='pdf_helpers.js') }}"></script>
+<script>
+(function () {
+    PDFHelpers.setupPdfJs();
+
+    // ---------------------------------------------------------------- state
+    var pdfBlob       = null;
+    var pdfDoc        = null;
+    var totalPages    = 0;
+    var currentPage   = 1;
+    var displayScale  = 1.0;
+    var renderTask    = null;
+    var ocrPagesText  = {};       // { pageNum: text }
+    var jobId         = null;
+    var pollTimer     = null;
+    var langs         = {};
+    var autoCode      = 'auto';
+
+    // ---------------------------------------------------------------- DOM
+    var form           = document.getElementById('ocrForm');
+    var fileInput      = document.getElementById('ocrFile');
+    var fileInfo       = document.getElementById('fileInfo');
+    var settings       = document.getElementById('ocrSettings');
+    var langSel        = document.getElementById('ocrLang');
+    var langNote       = document.getElementById('ocrLangNote');
+    var pagesInput     = document.getElementById('ocrPagesInput');
+    var scopeRadios    = document.querySelectorAll('input[name="ocrScope"]');
+    var startBtn       = document.getElementById('startOcrBtn');
+    var stopBtn        = document.getElementById('cancelOcrBtn');
+
+    var progWrap       = document.getElementById('ocrProgressWrap');
+    var progBar        = document.getElementById('ocrProgressBar');
+    var progLabel      = document.getElementById('ocrProgressLabel');
+    var progMsg        = document.getElementById('ocrProgressMsg');
+
+    var viewerWrap     = document.getElementById('ocrViewerWrap');
+    var viewer         = document.getElementById('ocrViewer');
+    var viewPreviewBtn = document.getElementById('viewPreviewBtn');
+    var viewTextBtn    = document.getElementById('viewTextBtn');
+    var viewSideBtn    = document.getElementById('viewSideBtn');
+
+    var canvas         = document.getElementById('ocrCanvas');
+    var pdfScroll      = document.getElementById('ocrPdfScroll');
+    var prevPageBtn    = document.getElementById('prevPageBtn');
+    var nextPageBtn    = document.getElementById('nextPageBtn');
+    var pageJump       = document.getElementById('pageJump');
+    var totalLabel     = document.getElementById('totalPages');
+    var zoomInBtn      = document.getElementById('zoomInBtn');
+    var zoomOutBtn     = document.getElementById('zoomOutBtn');
+    var zoomLabel      = document.getElementById('zoomLabel');
+    var fitBtn         = document.getElementById('fitBtn');
+    var textArea       = document.getElementById('ocrTextArea');
+    var textStatus     = document.getElementById('textStatus');
+
+    var errBox         = document.getElementById('ocrError');
+    var okBox          = document.getElementById('ocrSuccess');
+    var summary        = document.getElementById('ocrSummary');
+    var dlPdfBtn       = document.getElementById('dlPdfBtn');
+    var dlTxtBtn       = document.getElementById('dlTxtBtn');
+    var cancelBtn      = document.getElementById('cancelBtn');
+
+    // ---------------------------------------------------------------- helpers
+    function hideMessages() { errBox.classList.add('d-none'); okBox.classList.add('d-none'); }
+    function showError(m) { errBox.textContent = m; errBox.classList.remove('d-none'); }
+    function humanSize(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+        return (b / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function setView(name) {
+        viewer.classList.remove('view-preview', 'view-text', 'view-side');
+        viewer.classList.add('view-' + name);
+        viewPreviewBtn.classList.toggle('active', name === 'preview');
+        viewTextBtn.classList.toggle('active',    name === 'text');
+        viewSideBtn.classList.toggle('active',    name === 'side');
+    }
+    viewPreviewBtn.addEventListener('click', function () { setView('preview'); });
+    viewTextBtn.addEventListener('click',    function () { setView('text'); });
+    viewSideBtn.addEventListener('click',    function () { setView('side'); });
+
+    // ---------------------------------------------------------------- languages
+    function loadLanguages() {
+        var fd = new FormData(); fd.append('action', 'languages');
+        return fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (!res.success) throw new Error(res.error || 'Cannot read languages.');
+                langs = res.languages || {};
+                autoCode = res.auto || 'auto';
+                if (!res.tesseract) {
+                    langNote.textContent = 'Tesseract is not installed on the server — OCR is disabled.';
+                    langSel.innerHTML = '<option value="">(unavailable)</option>';
+                    startBtn.disabled = true;
+                    return;
+                }
+                if (!res.poppler) {
+                    langNote.textContent = 'pdf2image/poppler is not available — OCR is disabled.';
+                    langSel.innerHTML = '<option value="">(unavailable)</option>';
+                    startBtn.disabled = true;
+                    return;
+                }
+                var keys = Object.keys(langs);
+                if (keys.length === 0) {
+                    langNote.textContent = 'No OCR language data is installed on the server.';
+                    langSel.innerHTML = '<option value="">(none installed)</option>';
+                    startBtn.disabled = true;
+                    return;
+                }
+                var html = '';
+                if (keys.length > 1) {
+                    html += '<option value="' + autoCode + '">Auto detect</option>';
+                }
+                keys.sort().forEach(function (code) {
+                    html += '<option value="' + code + '">' + langs[code] + '</option>';
+                });
+                langSel.innerHTML = html;
+                langNote.textContent = 'Installed: ' + keys.map(function (k) { return langs[k]; }).join(', ');
+            })
+            .catch(function (e) {
+                langNote.textContent = e.message || String(e);
+            });
+    }
+
+    // ---------------------------------------------------------------- scope / pages input
+    scopeRadios.forEach(function (r) {
+        r.addEventListener('change', function () {
+            var v = document.querySelector('input[name="ocrScope"]:checked').value;
+            pagesInput.disabled = (v !== 'selected' && v !== 'range');
+            pagesInput.placeholder = (v === 'selected')
+                ? 'e.g. 2,5,8'
+                : (v === 'range'
+                    ? 'e.g. 1-3,5,7-9'
+                    : 'e.g. "2,5,8" for Selected   or   "1-3,5,7-9" for Range');
+            startBtn.disabled = !canStart();
+        });
+    });
+    pagesInput.addEventListener('input', function () { startBtn.disabled = !canStart(); });
+
+    function canStart() {
+        if (!pdfDoc || !langs || Object.keys(langs).length === 0) return false;
+        var v = document.querySelector('input[name="ocrScope"]:checked').value;
+        if ((v === 'selected' || v === 'range') && !pagesInput.value.trim()) return false;
+        return true;
+    }
+
+    // ---------------------------------------------------------------- preview
+    function renderPage(n) {
+        if (!pdfDoc) return;
+        if (renderTask) { try { renderTask.cancel(); } catch (e) {} }
+        currentPage = Math.max(1, Math.min(totalPages, n));
+        pageJump.value = String(currentPage);
+        totalLabel.textContent = String(totalPages);
+        zoomLabel.textContent = Math.round(displayScale * 100) + '%';
+
+        pdfDoc.getPage(currentPage).then(function (page) {
+            var vp = page.getViewport({ scale: displayScale });
+            canvas.width  = Math.floor(vp.width);
+            canvas.height = Math.floor(vp.height);
+            renderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+            return renderTask.promise;
+        }).then(updateTextPanel).catch(function () {});
+    }
+    function updateTextPanel() {
+        if (ocrPagesText[currentPage] !== undefined) {
+            textArea.value = ocrPagesText[currentPage];
+            textStatus.textContent = 'page ' + currentPage;
+        } else if (Object.keys(ocrPagesText).length > 0) {
+            textArea.value = '(no OCR text for this page)';
+            textStatus.textContent = 'page ' + currentPage + ' — not processed';
+        } else {
+            textArea.value = '';
+            textStatus.textContent = '';
+        }
+    }
+    prevPageBtn.addEventListener('click', function () { if (currentPage > 1) renderPage(currentPage - 1); });
+    nextPageBtn.addEventListener('click', function () { if (currentPage < totalPages) renderPage(currentPage + 1); });
+    pageJump.addEventListener('change', function () { renderPage(parseInt(pageJump.value, 10) || 1); });
+    zoomInBtn.addEventListener('click',  function () { displayScale = Math.min(4, displayScale * 1.25); renderPage(currentPage); });
+    zoomOutBtn.addEventListener('click', function () { displayScale = Math.max(0.25, displayScale / 1.25); renderPage(currentPage); });
+    fitBtn.addEventListener('click', function () {
+        if (!pdfDoc) return;
+        pdfDoc.getPage(currentPage).then(function (page) {
+            var v = page.getViewport({ scale: 1 });
+            var avail = pdfScroll.clientWidth - 20;
+            displayScale = Math.max(0.25, Math.min(4, avail / v.width));
+            renderPage(currentPage);
+        });
+    });
+
+    // ---------------------------------------------------------------- prepare upload
+    function prepareFile(f) {
+        return PDFHelpers.prepareViaServer(form.action, f);
+    }
+
+    // ---------------------------------------------------------------- reset
+    function resetAll() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        pdfBlob = null;
+        if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} pdfDoc = null; }
+        totalPages = 0;
+        currentPage = 1;
+        displayScale = 1.0;
+        ocrPagesText = {};
+        jobId = null;
+        canvas.width = 0; canvas.height = 0;
+        textArea.value = '';
+        textStatus.textContent = '';
+        progWrap.classList.add('d-none');
+        progBar.style.width = '0%';
+        progLabel.textContent = '0%';
+        progMsg.textContent = '';
+        settings.classList.add('d-none');
+        viewerWrap.classList.add('d-none');
+        startBtn.disabled = true;
+        stopBtn.disabled = true;
+        fileInfo.innerHTML = '<em>Upload a file to preview and choose OCR settings.</em>';
+        document.querySelector('input[name="ocrScope"][value="all"]').checked = true;
+        pagesInput.value = '';
+        pagesInput.disabled = true;
+        setView('preview');
+    }
+
+    fileInput.addEventListener('change', function () {
+        hideMessages();
+        resetAll();
+        var f = fileInput.files[0];
+        if (!f) return;
+        fileInfo.innerHTML = 'Loading <strong>' + f.name + '</strong> (' + humanSize(f.size) + ')…';
+
+        prepareFile(f).then(function (res) {
+            pdfBlob = res.blob;
+            pdfDoc  = res.doc;
+            totalPages = pdfDoc.numPages;
+            currentPage = 1;
+            pageJump.max = totalPages;
+            fileInfo.innerHTML = '<strong>' + f.name + '</strong> loaded — ' +
+                totalPages + ' page' + (totalPages === 1 ? '' : 's') + '.';
+            settings.classList.remove('d-none');
+            viewerWrap.classList.remove('d-none');
+            renderPage(1);
+            setTimeout(function () { fitBtn.click(); }, 30);
+            startBtn.disabled = !canStart();
+        }).catch(function (e) {
+            resetAll();
+            showError(e.message || String(e));
+        });
+    });
+
+    // ---------------------------------------------------------------- start OCR
+    startBtn.addEventListener('click', function () {
+        hideMessages();
+        if (!pdfBlob) { showError('Please upload a file first.'); return; }
+
+        var scope = document.querySelector('input[name="ocrScope"]:checked').value;
+        var pagesValue = pagesInput.value.trim();
+        if ((scope === 'selected' || scope === 'range') && !pagesValue) {
+            showError('Please enter the page numbers to process.');
+            return;
+        }
+
+        var fd = new FormData();
+        fd.append('action',       'start');
+        fd.append('file',         pdfBlob, 'main.pdf');
+        fd.append('language',     langSel.value);
+        fd.append('scope',        scope);
+        fd.append('pages',        pagesValue);
+        fd.append('current_page', String(currentPage));
+
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+        progWrap.classList.remove('d-none');
+        progBar.style.width = '2%';
+        progLabel.textContent = '…';
+        progMsg.textContent = 'Starting…';
+
+        fetch(form.action, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+                if (!res.ok || !res.body.success) {
+                    throw new Error((res.body && res.body.error) || 'Could not start OCR.');
+                }
+                jobId = res.body.job;
+                ocrPagesText = {};
+                setView('side');
+                pollStatus();
+            })
+            .catch(function (e) {
+                showError(e.message || String(e));
+                stopBtn.disabled = true;
+                startBtn.disabled = !canStart();
+                progWrap.classList.add('d-none');
+            });
+    });
+
+    function pollStatus() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(function () {
+            if (!jobId) { clearInterval(pollTimer); return; }
+            var fd = new FormData();
+            fd.append('action', 'status');
+            fd.append('job', jobId);
+            fetch(form.action, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (!j.success) throw new Error(j.error || 'Status lookup failed.');
+                    progBar.style.width  = j.progress + '%';
+                    progLabel.textContent = j.progress + '%';
+                    progMsg.textContent  = j.message || '';
+                    if (j.status === 'done') {
+                        clearInterval(pollTimer); pollTimer = null;
+                        stopBtn.disabled = true;
+                        (j.pages || []).forEach(function (pt) { ocrPagesText[pt.page] = pt.text || ''; });
+                        updateTextPanel();
+                        dlPdfBtn.href = j.pdf_url || '#';
+                        dlPdfBtn.setAttribute('download', j.pdf_name || 'ocr.pdf');
+                        dlTxtBtn.href = j.txt_url || '#';
+                        dlTxtBtn.setAttribute('download', j.txt_name || 'ocr.txt');
+                        summary.innerHTML = 'OCR complete — <strong>' + (j.pages || []).length +
+                            ' page(s)</strong> processed. The output PDF preserves the original pages and '
+                            + 'adds an invisible OCR text layer so it is searchable and copyable.';
+                        okBox.classList.remove('d-none');
+                        startBtn.disabled = !canStart();
+                    } else if (j.status === 'error') {
+                        clearInterval(pollTimer); pollTimer = null;
+                        stopBtn.disabled = true;
+                        showError(j.error || 'OCR failed.');
+                        startBtn.disabled = !canStart();
+                    } else if (j.status === 'cancelled') {
+                        clearInterval(pollTimer); pollTimer = null;
+                        stopBtn.disabled = true;
+                        progMsg.textContent = 'Cancelled.';
+                        startBtn.disabled = !canStart();
+                    }
+                })
+                .catch(function (e) {
+                    clearInterval(pollTimer); pollTimer = null;
+                    stopBtn.disabled = true;
+                    showError(e.message || String(e));
+                    startBtn.disabled = !canStart();
+                });
+        }, 900);
+    }
+
+    stopBtn.addEventListener('click', function () {
+        if (!jobId) return;
+        var fd = new FormData();
+        fd.append('action', 'cancel');
+        fd.append('job', jobId);
+        fetch(form.action, { method: 'POST', body: fd }).catch(function () {});
+    });
+
+    // ---------------------------------------------------------------- cancel
+    cancelBtn.addEventListener('click', function () {
+        if (jobId) {
+            var fd = new FormData();
+            fd.append('action', 'cancel');
+            fd.append('job', jobId);
+            fetch(form.action, { method: 'POST', body: fd }).catch(function () {});
+        }
+        form.reset();
+        resetAll();
+        hideMessages();
+    });
+
+    loadLanguages();
+})();
+</script>
+{% endblock %}
