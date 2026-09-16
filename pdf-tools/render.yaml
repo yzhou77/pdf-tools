@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: pdf-tools
-    runtime: docker
-    plan: free
-    healthCheckPath: /healthz
-    envVars:
-      - key: SECRET_KEY
-        generateValue: true
